@@ -181,7 +181,7 @@ public class Tap : MonoBehaviour
         // 初始化新版NoteData
         tap.noteData = new NoteData()
         {
-            keyIndex = keyIndex,
+            KeyIndex = keyIndex,
             x = position.x,
             y = position.y,
             isVisible = true

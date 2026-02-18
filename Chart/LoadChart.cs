@@ -7,6 +7,29 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.Networking;
 
+// 起始状态：(key_name x y show)
+// 0 5 -5 1
+// 1 4 -4 1
+// 2 3 -3 1
+// 3 2 -2 1
+
+// 谱面：(note num time_a time_b x1 y1 x2 y2 command)
+// 音符的编号不可重复，指令按照起始时间排列，以下为音符数，指令数和总时长
+// 6
+// 11
+// 28.000
+// # tap 1 drop_to 0 14.000 16.000 4 -4 5 -5
+// ! tap 2 drift 14.000 16.000 4 -4 5 -5
+// % tap 2 destroy 16.000
+// # tap 3 move 14.000 16.000 move_1.json
+// # hold 4 drop_to 1 18.000 20.000 4 -4 5 -5 3
+// # dtap 5 drop_to 0 20.000 22.000 4 -4 5 -5
+// # flick 6 drop_to 2 22.000 24.000 -1 1 0 0
+// $ key 0 hide 24.000
+// $ key 1 drift 24.000 26.000 4 -4 3 -3
+// $ key 0 show 26.000
+// $ key 2 move 26.000 28.000 move_2.json
+
 public class LoadChart : MonoBehaviour
 {
     private string chartContent; // 加载的谱面文本内容
@@ -103,6 +126,10 @@ public class LoadChart : MonoBehaviour
             Debug.LogError("ParseChart: 谱面内容为空，无法解析");
             return null;
         }
+        
+        // 解析前先重置数据，避免切换谱面时数据残留
+        ChartData.Instance.ResetChartData();
+        
         ChartData.Instance.noteCount = noteCount;
         ChartData.Instance.totalDuration = totalDuration;
 
@@ -111,7 +138,7 @@ public class LoadChart : MonoBehaviour
             .Where(line => !string.IsNullOrEmpty(line))
             .ToList();
 
-        ParseKeyInitialState(lines); // 修正原代码参数错误（原代码调用时传了ChartData.Instance，但方法定义未接收）
+        ParseKeyInitialState(lines);
         ParseCommands(lines, ChartData.Instance);
 
         ChartData.Instance.SortCommandsByTime();
@@ -215,11 +242,17 @@ public class LoadChart : MonoBehaviour
         }
     }
 
-    // 核心修改：新增 isNoteFirstTimeOccured 参数，用于给Command赋值
+    // 核心修改：适配Command无自定义构造函数的结构，修正字段赋值逻辑
     private void ParseNoteCommand(string[] parts, ChartData chartData, bool? isScorable, bool isNoteFirstTimeOccured)
     {
         try
         {
+            if (parts.Length < 4)
+            {
+                Debug.LogWarning($"ParseNoteCommand: 指令参数不足，parts={string.Join(",", parts)}");
+                return;
+            }
+
             NoteType noteType = ParseNoteType(parts[1]);
             if (!int.TryParse(parts[2], out int num))
             {
@@ -227,6 +260,7 @@ public class LoadChart : MonoBehaviour
                 return;
             }
 
+            // 处理记分状态
             bool currentScorable = true;
             if (isScorable.HasValue)
             {
@@ -250,82 +284,86 @@ public class LoadChart : MonoBehaviour
                 }
             }
 
+            // 初始化指令字段
             float timeA = 0, timeB = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+            int keyName = 0;
             string cmd = parts[3];
-            string noteMoveFileName = ""; // 存储move指令的JSON文件名
+            string noteMoveFileName = "";
 
             // 按指令类型分情况解析参数
             switch (cmd)
             {
                 case "destroy":
                     // % tap 2 destroy 16.000 → 仅时间A
-                    float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                    if (parts.Length >= 5)
+                    {
+                        float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                    }
                     break;
 
                 case "move":
                     // # tap 3 move 14.000 16.000 move_1.json → 时间A + 时间B + JSON文件名
-                    int moveParamIndex = 4;
-                    if (moveParamIndex + 1 < parts.Length)
+                    if (parts.Length >= 6)
                     {
-                        float.TryParse(parts[moveParamIndex], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
-                        float.TryParse(parts[moveParamIndex + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                        float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                        float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
                     }
-                    if (moveParamIndex + 2 < parts.Length)
+                    if (parts.Length >= 7)
                     {
-                        noteMoveFileName = parts[moveParamIndex + 2];
-                        cmd += $" {noteMoveFileName}"; // 拼接文件名到command字段
+                        noteMoveFileName = parts[6];
                     }
                     break;
 
                 case "drop_to":
                     // # tap 1 drop_to 0 14.000 16.000 4 -4 5 -5 → 目标key + 时间 + 坐标
-                    int dropToParamIndex = 5; // 跳过drop_to后的目标key（parts[4]）
-                    if (dropToParamIndex + 1 < parts.Length)
+                    if (parts.Length >= 5)
                     {
-                        float.TryParse(parts[dropToParamIndex], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
-                        float.TryParse(parts[dropToParamIndex + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                        int.TryParse(parts[4], out keyName); // 解析drop_to指向的key
                     }
-                    if (dropToParamIndex + 5 < parts.Length)
+                    if (parts.Length >= 7)
                     {
-                        float.TryParse(parts[dropToParamIndex + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
-                        float.TryParse(parts[dropToParamIndex + 3], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
-                        float.TryParse(parts[dropToParamIndex + 4], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
-                        float.TryParse(parts[dropToParamIndex + 5], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
+                        float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                        float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
                     }
-                    // hold指令额外处理持续时间
-                    if (noteType == NoteType.Hold && dropToParamIndex + 2 < parts.Length)
+                    if (parts.Length >= 11)
                     {
-                        cmd += $" {parts[dropToParamIndex + 2]}";
+                        float.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
+                        float.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
+                        float.TryParse(parts[9], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
+                        float.TryParse(parts[10], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
+                    }
+                    // hold指令额外拼接持续时间参数
+                    if (noteType == NoteType.Hold && parts.Length >= 12)
+                    {
+                        cmd += $" {parts[11]}";
                     }
                     break;
 
                 case "drift":
                     // ! tap 2 drift 14.000 16.000 4 -4 5 -5 → 时间 + 坐标
-                    int driftParamIndex = 4;
-                    if (driftParamIndex + 1 < parts.Length)
+                    if (parts.Length >= 6)
                     {
-                        float.TryParse(parts[driftParamIndex], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
-                        float.TryParse(parts[driftParamIndex + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                        float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                        float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
                     }
-                    if (driftParamIndex + 5 < parts.Length)
+                    if (parts.Length >= 10)
                     {
-                        float.TryParse(parts[driftParamIndex + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
-                        float.TryParse(parts[driftParamIndex + 3], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
-                        float.TryParse(parts[driftParamIndex + 4], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
-                        float.TryParse(parts[driftParamIndex + 5], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
+                        float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
+                        float.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
+                        float.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
+                        float.TryParse(parts[9], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
                     }
                     break;
 
                 default:
                     Debug.LogWarning($"ParseNoteCommand: 未处理的note指令类型 {cmd}，按默认逻辑解析");
-                    int defaultParamIndex = 4;
-                    if (cmd == "drop_to") defaultParamIndex++;
-                    if (defaultParamIndex + 1 < parts.Length)
+                    int defaultParamIndex = cmd == "drop_to" ? 5 : 4;
+                    if (parts.Length >= defaultParamIndex + 1)
                     {
                         float.TryParse(parts[defaultParamIndex], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
                         float.TryParse(parts[defaultParamIndex + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
                     }
-                    if (defaultParamIndex + 5 < parts.Length)
+                    if (parts.Length >= defaultParamIndex + 6)
                     {
                         float.TryParse(parts[defaultParamIndex + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
                         float.TryParse(parts[defaultParamIndex + 3], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
@@ -335,24 +373,23 @@ public class LoadChart : MonoBehaviour
                     break;
             }
 
-            // 核心修改：创建Command时传入 isNoteFirstTimeOccured 参数
-            Command noteCmd = new Command(
-                num: num,
-                type: noteType,
-                timeA: timeA,
-                timeB: timeB,
-                x1: x1,
-                y1: y1,
-                x2: x2,
-                y2: y2,
-                command: cmd,
-                isNoteFirstTimeOccured: isNoteFirstTimeOccured // 赋值首次出现标记
-            );
-            noteCmd.is_show = true;
+            // 核心修改：Command无自定义构造函数，直接赋值字段
+            Command noteCmd = new Command();
+            noteCmd.is_show = true; // 默认显示
+            noteCmd.type = noteType;
+            noteCmd.num = num;
+            noteCmd.timeA = timeA;
+            noteCmd.timeB = timeB;
+            noteCmd.x1 = x1;
+            noteCmd.y1 = y1;
+            noteCmd.x2 = x2;
+            noteCmd.y2 = y2;
+            noteCmd.key_name = keyName; // 赋值drop_to指向的key
+            noteCmd.filename = noteMoveFileName; // 单独赋值move指令的JSON文件名
+            noteCmd.commandName = cmd; // 指令类型（不再拼接文件名）
+            noteCmd.isNoteFirstTimeOccured = isNoteFirstTimeOccured;
 
             chartData.commands.Add(noteCmd);
-            // 修正原代码：原代码用了ChartData.Instance，改为传入的chartData参数（更规范）
-            chartData.commandScorable.Add(currentScorable);
 
             // 调试日志：验证move指令解析
             if (cmd.StartsWith("move"))
@@ -370,6 +407,12 @@ public class LoadChart : MonoBehaviour
     {
         try
         {
+            if (parts.Length < 4)
+            {
+                Debug.LogWarning($"ParseKeyMoveCommand: 指令参数不足，parts={string.Join(",", parts)}");
+                return;
+            }
+
             if (!int.TryParse(parts[2], out int keyNum))
             {
                 Debug.LogWarning($"ParseKeyMoveCommand: Key编号解析失败，parts={string.Join(",", parts)}");
@@ -377,34 +420,39 @@ public class LoadChart : MonoBehaviour
             }
 
             string cmdType = parts[3];
-            float timeA = 0, timeB = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+            float startTime = 0, endTime = 0;
+            Vector2 targetPos = Vector2.zero;
             string extraParam = "";
 
+            // 解析时间参数
             if (parts.Length >= 5)
             {
-                float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out startTime);
             }
-
             if (parts.Length >= 6)
             {
-                float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out endTime);
             }
 
+            // 解析不同指令类型的参数
             switch (cmdType.ToLower())
             {
                 case "hide":
                 case "show":
+                    // hide/show仅需时间，无坐标
                     break;
                 case "drift":
-                    if (parts.Length >= 9)
+                    // drift需要目标坐标
+                    if (parts.Length >= 10)
                     {
-                        float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
-                        float.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
+                        float x2 = 0, y2 = 0;
                         float.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
                         float.TryParse(parts[9], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
+                        targetPos = new Vector2(x2, y2);
                     }
                     break;
                 case "move":
+                    // move指令暂存JSON文件名（如需解析JSON可在此扩展）
                     if (parts.Length >= 7)
                     {
                         extraParam = parts[6];
@@ -415,16 +463,16 @@ public class LoadChart : MonoBehaviour
                     break;
             }
 
-            // 修正：适配ChartData中KeyMoveData的构造函数参数（原代码构造函数参数与解析字段不匹配）
+            // 创建KeyMoveData并添加到列表
             KeyMoveData keyMoveData = new KeyMoveData(
                 keyIndex: keyNum,
-                startTime: timeA,
-                endTime: timeB,
-                targetPos: new Vector2(x2, y2) // 取drift/move的最终目标坐标
+                startTime: startTime,
+                endTime: endTime,
+                targetPos: targetPos
             );
             chartData.keyMoveDatas.Add(keyMoveData);
 
-            Debug.Log($"解析KeyMove指令成功：Key{keyNum} | {cmdType} | 时间[{timeA},{timeB}]");
+            Debug.Log($"解析KeyMove指令成功：Key{keyNum} | {cmdType} | 时间[{startTime},{endTime}] | 目标坐标：{targetPos}");
         }
         catch (Exception e)
         {

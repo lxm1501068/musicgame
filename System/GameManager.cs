@@ -2,145 +2,129 @@ using UnityEngine;
 
 public class GameManager : MonoBehaviour
 {
-    public string filename;          // 谱面文件名（如chart1.txt）
-    // 单例实例（全局唯一访问点）
+    // 单例实例（全局唯一）
     public static GameManager Instance;
 
-    // 谱面开始时间（单位：秒，可在Inspector面板调整）
-    [Tooltip("谱面开始的基准时间（单位：秒）")]
-    public float chartStartTime;
+    [Header("谱面运行器引用（Unity编辑器赋值）")]
+    public ChartRunner chartRunner; // 关联ChartRunner组件
 
-    // 游戏播放状态标记（true=播放中，false=暂停/停止）
-    [Tooltip("标记当前游戏/谱面是否处于播放状态")]
-    public bool IsPlaying;
+    // 播放状态与时间相关字段
+    public bool IsPlaying { get; private set; } // 播放状态（只读，外部仅能通过方法修改）
+    public float chartStartTime { get; private set; } // 播放起始时间锚点
+    private float pauseAccumulator = 0; // 暂停时长累计（抵消暂停的时间差）
+    private float lastPauseTime = 0; // 上次暂停的时间
 
-    // 可选：引用场景中的ChartRunner，方便一键调用
-    public ChartRunner chartRunner;
+    // 供音符访问的「精准播放时间」（排除暂停）
+    public float CurrentPlayTime
+    {
+        get
+        {
+            if (!IsPlaying)
+            {
+                // 暂停时返回“暂停瞬间的播放时间”，避免音符继续移动
+                return lastPauseTime - chartStartTime - pauseAccumulator;
+            }
+            // 播放中：当前时间 - 起始时间 - 累计暂停时长
+            return Time.time - chartStartTime - pauseAccumulator;
+        }
+    }
 
-    public LoadChart loadChart; // 引用LoadChart组件，自动加载谱面数据
-
-    // 新增：防止ESC键短时间重复触发的状态锁
-    private bool isProcessingInput = false;
-
-    // 新增：暂停时的时间缩放值（0=完全暂停，1=正常，可在Inspector调整）
-    [Tooltip("暂停时的时间缩放值（0=完全暂停，1=正常）")]
-    public float pauseTimeScale = 0f;
-
-    // 单例初始化
     private void Awake()
     {
-        // 确保全局唯一实例
-        if (Instance == null)
-        {
-            Instance = this;
-            DontDestroyOnLoad(gameObject); // 跨场景保留GameManager
-        }
-        else
-        {
-            Destroy(gameObject); // 销毁重复的实例
-        }
+        // 单例初始化
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
 
-        // 变量默认值初始化
-        chartStartTime = 0f;
-        IsPlaying = false;
-        
-        // 初始化时间缩放为正常状态
-        Time.timeScale = 1f;
-        StartCoroutine(loadChart.LoadChartFile(filename));// 自动加载谱面
-    }
-
-    // 新增：每帧检测ESC键输入
-    private void Update()
-    {
-        // 检测ESC键按下 + 避免重复触发
-        if (Input.GetKeyDown(KeyCode.Escape) && !isProcessingInput)
+        // 校验ChartRunner引用（避免空引用）
+        if (chartRunner == null)
         {
-            ToggleGamePlay(); // 调用原有暂停/继续逻辑
-            LockInputTemporarily(); // 锁定输入防止重复触发
+            Debug.LogError("GameManager: 未赋值ChartRunner引用！请在Unity编辑器中绑定。");
         }
     }
 
-    // ========== 原有核心方法（保留并优化） ==========
+    #region 新增：谱面播放控制核心方法（从ChartRunner迁移）
     /// <summary>
-    /// 启动游戏/谱面播放
+    /// 开始播放谱面（需先调用PreCreateAllNotes预创建音符）
     /// </summary>
-    public void StartGame()
+    public void PlayChart()
     {
-        // 1. 初始化游戏状态
+        // 前置校验
+        if (chartRunner == null)
+        {
+            Debug.LogError("GameManager.PlayChart: ChartRunner引用为空！");
+            return;
+        }
+        if (!chartRunner.IsNotesPreCreated)
+        {
+            Debug.LogError("GameManager.PlayChart: 未预创建音符，请先调用PreCreateAllNotes！");
+            return;
+        }
+
+        // 重置播放状态
         IsPlaying = true;
-        Time.timeScale = 1f; // 确保启动时时间缩放正常
-        chartStartTime = Time.time; // 记录当前时间作为谱面开始时间
-        Debug.Log($"游戏已启动 | 谱面开始时间：{chartStartTime} | 播放状态：{IsPlaying}");
+        chartStartTime = Time.time;
+        pauseAccumulator = 0; // 清空暂停累计时长
+        Debug.Log("GameManager: 谱面开始播放！");
+    }
 
-        // 2. 自动调用ChartRunner的播放逻辑（如果绑定）
-        if (chartRunner != null)
+    /// <summary>
+    /// 暂停/恢复谱面播放
+    /// </summary>
+    public void TogglePlay()
+    {
+        if (chartRunner == null)
         {
-            chartRunner.PlayChart();
+            Debug.LogError("GameManager.TogglePlay: ChartRunner引用为空！");
+            return;
+        }
+
+        IsPlaying = !IsPlaying;
+        if (IsPlaying)
+        {
+            // 恢复播放：累计暂停时长
+            pauseAccumulator += Time.time - lastPauseTime;
+            Debug.Log("GameManager: 谱面恢复播放");
         }
         else
         {
-            Debug.LogWarning("GameManager中未绑定ChartRunner，需手动调用PlayChart()");
+            // 暂停播放：记录暂停瞬间的时间
+            lastPauseTime = Time.time;
+            Debug.Log("GameManager: 谱面已暂停");
         }
     }
 
     /// <summary>
-    /// 停止游戏/谱面播放
+    /// 停止播放并清理所有音符
     /// </summary>
-    public void StopGame()
+    public void StopChart()
     {
+        if (chartRunner == null)
+        {
+            Debug.LogError("GameManager.StopChart: ChartRunner引用为空！");
+            return;
+        }
+
+        // 重置全局播放状态
         IsPlaying = false;
-        Time.timeScale = 1f; // 停止后恢复时间缩放（可选，根据需求调整）
-        if (chartRunner != null)
+        pauseAccumulator = 0;
+
+        // 调用ChartRunner清理音符（核心：ChartRunner仅做具体的音符管理）
+        chartRunner.CleanAllNotes();
+
+        Debug.Log("GameManager: 谱面已停止，所有音符已清理");
+    }
+
+    /// <summary>
+    /// 预创建所有音符（封装ChartRunner的方法，对外统一入口）
+    /// </summary>
+    public void PreCreateAllNotes()
+    {
+        if (chartRunner == null)
         {
-            chartRunner.StopChart();
+            Debug.LogError("GameManager.PreCreateAllNotes: ChartRunner引用为空！");
+            return;
         }
-        Debug.Log("游戏已停止");
+        chartRunner.PreCreateAllNotes();
     }
-
-    /// <summary>
-    /// 暂停/继续游戏（核心切换逻辑）
-    /// </summary>
-    public void ToggleGamePlay()
-    {
-        IsPlaying = !IsPlaying;
-        
-        // 同步时间缩放：暂停时设为0，继续时恢复1
-        Time.timeScale = IsPlaying ? 1f : pauseTimeScale;
-        
-        // 同步ChartRunner的播放状态
-        if (chartRunner != null)
-        {
-            chartRunner.TogglePlay();
-        }
-        
-        Debug.Log($"游戏状态切换：{(IsPlaying ? "播放中" : "已暂停")} | 时间缩放：{Time.timeScale}");
-    }
-
-    // ========== 新增：输入防重复触发逻辑 ==========
-    /// <summary>
-    /// 临时锁定输入（防止ESC键短时间重复触发）
-    /// </summary>
-    private void LockInputTemporarily()
-    {
-        isProcessingInput = true;
-        // 0.1秒后解锁（可根据需求调整间隔）
-        Invoke(nameof(UnlockInput), 0.1f);
-    }
-
-    /// <summary>
-    /// 解锁输入
-    /// </summary>
-    private void UnlockInput()
-    {
-        isProcessingInput = false;
-    }
-
-    // ========== 新增：场景销毁时恢复时间缩放 ==========
-    /// <summary>
-    /// 防止切换场景后时间缩放残留为0
-    /// </summary>
-    private void OnDestroy()
-    {
-        Time.timeScale = 1f;
-    }
+    #endregion
 }

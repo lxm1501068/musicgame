@@ -57,22 +57,10 @@ public class Command
     public float y1;           // y1坐标（支持表达式）
     public float x2;           // x2坐标（支持表达式）
     public float y2;           // y2坐标（支持表达式）
-    public string command; // 指令列表
+    public int key_name;        // Drop_to指令指向的key
+    public string filename;     //Move指令的.json文件名
+    public string commandName; // 指令名称
     public bool isNoteFirstTimeOccured; // 是否第一次创建音符
-
-    public Command(int num, NoteType type, float timeA, float timeB, float x1, float y1, float x2, float y2, string command, bool isNoteFirstTimeOccured = true)
-    {
-        this.num = num;
-        this.type = type;
-        this.timeA = timeA;
-        this.timeB = timeB;
-        this.x1 = x1;
-        this.y1 = y1;
-        this.x2 = x2;
-        this.y2 = y2;
-        this.command = command;
-        this.isNoteFirstTimeOccured = isNoteFirstTimeOccured;
-    }
 }
 
 // 谱面总数据（改造为ScriptableObject单例，保留所有原有方法/字段）
@@ -105,7 +93,6 @@ public class ChartData : ScriptableObject
         }
     }
 
-    // ========== 以下是原有字段，完全保留 ==========
     public List<KeyData> keyDatas = new List<KeyData>();  // 按键初始状态
     public List<Command> commands = new List<Command>();// 所有音符（保持原有List结构）
     public float totalDuration;                           // 谱面总时长

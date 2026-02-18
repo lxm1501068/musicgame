@@ -67,7 +67,7 @@ public class Drag : MonoBehaviour
         {
             noteData = new NoteData()
             {
-                keyIndex = 0,
+                KeyIndex = 0,
                 x = transform.position.x,
                 y = transform.position.y,
                 isVisible = true
@@ -128,8 +128,8 @@ public class Drag : MonoBehaviour
         }
 
         // 2. 检测输入（按下/按住任一有效，需InputManager实现IsGroupHeld）
-        bool isKeyPressed = noteTools.input.IsGroupPressed(noteData.keyIndex);
-        bool isKeyHeld = noteTools.input.IsGroupHeld(noteData.keyIndex);
+        bool isKeyPressed = noteTools.input.IsGroupPressed(noteData.KeyIndex);
+        bool isKeyHeld = noteTools.input.IsGroupHeld(noteData.KeyIndex);
 
         if (isKeyPressed || isKeyHeld)
         {
@@ -231,7 +231,7 @@ public class Drag : MonoBehaviour
         drag.judgeTime = judgeTime;
         drag.noteData = new NoteData()
         {
-            keyIndex = keyIndex,
+            KeyIndex = keyIndex,
             x = position.x,
             y = position.y,
             isVisible = true

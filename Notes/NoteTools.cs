@@ -27,10 +27,12 @@ public class MoveFrameList
 [Serializable]
 public class NoteData
 {
-    public int keyIndex;          // 按键序号
+    public int NoteIndex;          // 音符序号
+    public int KeyIndex;           //键序号
     public float x;               // X坐标
     public float y;               // Y坐标
     public bool isVisible = true; // 是否显示
+    public List<Command> commands;// 指令
 }
 
 #region 1. Shift指令类（速度+方向+终止时间+移动逻辑）
@@ -86,25 +88,26 @@ public class DropToCommand : ShiftCommand
     public float perfectThreshold = 0.1f;
     public float goodThreshold = 0.2f;
     public float badThreshold = 0.3f;
+    public int KeyIndex;
 
     // 判定结果移到这里（不再依赖NoteData）
     public JudgeResult judgeResult = JudgeResult.None;
     public InputManager input;    // 输入检测
 
     // 构造函数
-    public DropToCommand(NoteData note, Command cmd, InputManager input) : base(note, cmd)
+    public DropToCommand(NoteData note, Command cmd, int KeyIndex, InputManager input) : base(note, cmd)
     {
         this.input = input;
-        note.keyIndex = cmd.num; // 绑定按键序号
+        this.KeyIndex = KeyIndex; // 绑定按键序号
     }
 
     // 判定方法（结果存在当前类的judgeResult）
-    public void Judge(float currentTime)
+    public void Judge(float currentTime, int KeyIndex)
     {
         if (note == null || judgeResult != JudgeResult.None) return;
 
         float timeDiff = currentTime - endTime;
-        bool isKeyPressed = input.IsGroupPressed(note.keyIndex);
+        bool isKeyPressed = input.IsGroupPressed(KeyIndex);
 
         // 判定逻辑
         if (isKeyPressed)
@@ -237,7 +240,7 @@ public class NoteTools : MonoBehaviour
     // 创建DropTo指令（返回实例，交给Note Object持有）
     public DropToCommand CreateDropToCommand(NoteData note, Command cmd)
     {
-        return new DropToCommand(note, cmd, input);
+        return new DropToCommand(note, cmd);
     }
 
     // 创建Move指令（返回实例，交给Note Object持有）

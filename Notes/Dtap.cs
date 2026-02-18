@@ -71,7 +71,6 @@ public class Dtap : MonoBehaviour
         {
             noteData = new NoteData
             {
-                keyIndex = dropToCmd.num,
                 x = dropToCmd.x1,
                 y = dropToCmd.y1,
                 isVisible = true
@@ -82,7 +81,7 @@ public class Dtap : MonoBehaviour
         CreateTapNoteObjects();
 
         // 初始化Tap1的DropTo判定逻辑（复用NoteTools的判定规则）
-        tap1DropToCmd = new DropToCommand(noteData, dropToCmd, noteTools.input);
+        tap1DropToCmd = new DropToCommand(noteData, dropToCmd);
         noteTools.CreateDropToCommand(noteData, dropToCmd); // 注册到NoteTools驱动移动
 
         // 初始显示默认精灵
@@ -95,7 +94,7 @@ public class Dtap : MonoBehaviour
     private void CreateTapNoteObjects()
     {
         // 创建Tap1物体
-        tap1Obj = new GameObject($"Dtap_Tap1_Key{noteData.keyIndex}");
+        tap1Obj = new GameObject($"Dtap_Tap1_Key{noteData.KeyIndex}");
         tap1Obj.transform.SetParent(transform);
         tap1Obj.transform.localPosition = tap1Offset;
         tap1Renderer = tap1Obj.AddComponent<SpriteRenderer>();
@@ -103,7 +102,7 @@ public class Dtap : MonoBehaviour
         tap1Renderer.sortingOrder = 1;
 
         // 创建Tap2物体
-        tap2Obj = new GameObject($"Dtap_Tap2_Key{noteData.keyIndex}");
+        tap2Obj = new GameObject($"Dtap_Tap2_Key{noteData.KeyIndex}");
         tap2Obj.transform.SetParent(transform);
         tap2Obj.transform.localPosition = tap2Offset;
         tap2Renderer = tap2Obj.AddComponent<SpriteRenderer>();
@@ -186,7 +185,7 @@ public class Dtap : MonoBehaviour
         }
 
         // 检测按键按下（和Tap1共用同一个按键）
-        bool isKeyPressed = noteTools.input?.IsGroupPressed(noteData.keyIndex) ?? false;
+        bool isKeyPressed = InputManager.Instance.IsGroupPressed(noteData.KeyIndex) ?? false;
         if (isKeyPressed)
         {
             // 只要0.3秒内按下，无论时间差多少 → 判定为Perfect
@@ -285,7 +284,7 @@ public class Dtap : MonoBehaviour
         dtap.dropToCmd = dropToCmd;
         dtap.noteData = new NoteData
         {
-            keyIndex = dropToCmd.num,
+            KeyIndex = dropToCmd.num,
             x = dropToCmd.x1,
             y = dropToCmd.y1,
             isVisible = true
