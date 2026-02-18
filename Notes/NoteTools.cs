@@ -199,66 +199,51 @@ public class MoveCommand
 }
 #endregion
 
-#region 4. 简化的NoteTools（仅管理指令实例）
+#region 4. 单例版NoteTools（仅作为指令工厂）
 public class NoteTools : MonoBehaviour
 {
-    public InputManager input; // 输入检测类
-    // 指令实例列表
-    private List<ShiftCommand> _shiftCommands = new List<ShiftCommand>();
-    private List<DropToCommand> _dropToCommands = new List<DropToCommand>();
-    private List<MoveCommand> _moveCommands = new List<MoveCommand>();
+    // ===== 核心：单例实现 =====
+    public static NoteTools Instance { get; private set; }
 
-    // 创建Shift指令
-    public void CreateShiftCommand(NoteData note, Command cmd)
+    public InputManager input; // 输入检测类（全局唯一）
+
+    // 单例初始化（保证全局唯一）
+    private void Awake()
     {
-        _shiftCommands.Add(new ShiftCommand(note, cmd));
-    }
-
-    // 创建DropTo指令
-    public void CreateDropToCommand(NoteData note, Command cmd)
-    {
-        _dropToCommands.Add(new DropToCommand(note, cmd, input));
-    }
-
-    // 创建Move指令
-    public void CreateMoveCommand(NoteData note, string jsonPath)
-    {
-        _moveCommands.Add(new MoveCommand(note, jsonPath));
-    }
-
-    // 每帧驱动所有指令
-    private void Update()
-    {
-        float currentTime = GetCurrentMusicTime(); // 从ChartRunner单例获取游戏时间
-        float deltaTime = Time.deltaTime;
-
-        // 更新Shift指令
-        foreach (var cmd in _shiftCommands) cmd.UpdatePosition(currentTime, deltaTime);
-
-        // 更新DropTo指令（移动+判定）
-        foreach (var cmd in _dropToCommands)
+        if (Instance == null)
         {
-            cmd.UpdatePosition(currentTime, deltaTime);
-            cmd.Judge(currentTime);
-            // 如需获取判定结果，可从cmd.judgeResult读取
-            // 示例：if (cmd.judgeResult == JudgeResult.Perfect) { ... }
+            Instance = this;
+            DontDestroyOnLoad(gameObject); // 跨场景保留（可选，根据你的游戏流程）
+        }
+        else
+        {
+            Destroy(gameObject); // 重复实例直接销毁
         }
 
-        // 更新Move指令
-        foreach (var cmd in _moveCommands) cmd.UpdatePosition(currentTime);
+        // 校验InputManager引用（避免空指针）
+        if (input == null)
+        {
+            Debug.LogError("NoteTools: 未绑定InputManager！");
+        }
     }
 
-    private float GetCurrentMusicTime()
+    // ===== 仅保留：创建指令的工厂方法 =====
+    // 创建Shift指令（返回实例，交给Note Object持有）
+    public ShiftCommand CreateShiftCommand(NoteData note, Command cmd)
     {
-        // 空值防护：避免ChartRunner未初始化导致空引用
-        if (ChartRunner.Instance == null)
-        {
-            Debug.LogError("ChartRunner单例未找到！请检查ChartRunner是否挂载并初始化单例");
-            return 0f; // 返回默认值，避免逻辑崩溃
-        }
+        return new ShiftCommand(note, cmd);
+    }
 
-        // 返回ChartRunner中计算好的游戏进行时间
-        return ChartRunner.Instance.currentPlayTime;
+    // 创建DropTo指令（返回实例，交给Note Object持有）
+    public DropToCommand CreateDropToCommand(NoteData note, Command cmd)
+    {
+        return new DropToCommand(note, cmd, input);
+    }
+
+    // 创建Move指令（返回实例，交给Note Object持有）
+    public MoveCommand CreateMoveCommand(NoteData note, string jsonPath)
+    {
+        return new MoveCommand(note, jsonPath);
     }
 }
 #endregion

@@ -300,17 +300,4 @@ public class Dtap : MonoBehaviour
     {
         if (destroyCoroutine != null) StopCoroutine(destroyCoroutine);
     }
-
-    // 兼容旧版Command类（如果项目中未定义，需补充）
-    [System.Serializable]
-    public class Command
-    {
-        public float timeA;
-        public float timeB;
-        public float x1;
-        public float y1;
-        public float x2;
-        public float y2;
-        public int num;
-    }
 }
