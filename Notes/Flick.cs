@@ -112,8 +112,8 @@ public class Flick : MonoBehaviour
         // 已判定/已切换精灵 → 跳过逻辑
         if (isJudged || hasSwitchedSprite) return;
 
-        // 获取当前音乐时间（复用NoteTools的时间逻辑，保证全局时间统一）
-        float currentMusicTime = noteTools.GetComponent<NoteTools>().GetCurrentMusicTime();
+        // 获取当前音乐时间（对齐NoteTools的ChartRunner单例逻辑，补充空值防护）
+        float currentMusicTime = GetCurrentMusicTime();
         
         // 执行Flick核心判定
         CheckFlickJudge(currentMusicTime);
@@ -126,6 +126,24 @@ public class Flick : MonoBehaviour
             StartDelayDestroy();
         }
     }
+
+    #region 核心修改：对齐NoteTools的时间获取逻辑
+    /// <summary>
+    /// 获取当前音乐时间（与NoteTools的GetCurrentMusicTime逻辑完全一致）
+    /// </summary>
+    private float GetCurrentMusicTime()
+    {
+        // 空值防护：避免ChartRunner未初始化导致空引用
+        if (ChartRunner.Instance == null)
+        {
+            Debug.LogError($"[{gameObject.name}] ChartRunner单例未找到！请检查ChartRunner是否挂载并初始化单例");
+            return 0f; // 返回默认值，避免逻辑崩溃
+        }
+
+        // 返回ChartRunner中计算好的游戏进行时间（与NoteTools保持全局时间统一）
+        return ChartRunner.Instance.currentPlayTime;
+    }
+    #endregion
 
     #region 核心逻辑：Flick判定（11+其他按键 + 时间窗口）
     /// <summary>

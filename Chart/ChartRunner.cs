@@ -6,6 +6,11 @@ using UnityEngine.Networking;
 
 public class ChartRunner : MonoBehaviour
 {
+    #region 单例核心（新增）
+    // 全局唯一实例（公开只读，外部通过 ChartRunner.Instance 访问）
+    public static ChartRunner Instance { get; private set; }
+    #endregion
+
     #region 公共配置字段（Unity编辑器赋值）
     [Header("音符预制体")]
     public GameObject tapPrefab;       // Tap音符预制体
@@ -24,6 +29,24 @@ public class ChartRunner : MonoBehaviour
     private List<GameObject> createdNotes = new List<GameObject>(); // 已创建的音符列表
     private HashSet<int> createdNoteIds = new HashSet<int>();       // 已创建的音符ID（避免重复）
     private int currentCommandIndex = 0;       // 当前遍历到的指令索引（避免重复遍历）
+    #endregion
+
+    #region 单例初始化（新增）
+    private void Awake()
+    {
+        // 单例核心逻辑：确保全局唯一实例
+        if (Instance == null)
+        {
+            Instance = this;
+            // 可选：跨场景保留（如果谱面播放跨场景，取消注释）
+            // DontDestroyOnLoad(gameObject);
+        }
+        else
+        {
+            // 重复创建时销毁多余实例，避免逻辑冲突
+            Destroy(gameObject);
+        }
+    }
     #endregion
 
     #region 公共核心API（供GameManager调用）

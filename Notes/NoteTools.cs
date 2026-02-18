@@ -229,7 +229,7 @@ public class NoteTools : MonoBehaviour
     // 每帧驱动所有指令
     private void Update()
     {
-        float currentTime = GetCurrentMusicTime(); // 替换为你的音乐时间逻辑
+        float currentTime = GetCurrentMusicTime(); // 从ChartRunner单例获取游戏时间
         float deltaTime = Time.deltaTime;
 
         // 更新Shift指令
@@ -248,10 +248,17 @@ public class NoteTools : MonoBehaviour
         foreach (var cmd in _moveCommands) cmd.UpdatePosition(currentTime);
     }
 
-    // 示例：获取音乐当前时间（需替换为AudioSource.time）
     private float GetCurrentMusicTime()
     {
-        return Time.time; // 临时用系统时间，实际需改
+        // 空值防护：避免ChartRunner未初始化导致空引用
+        if (ChartRunner.Instance == null)
+        {
+            Debug.LogError("ChartRunner单例未找到！请检查ChartRunner是否挂载并初始化单例");
+            return 0f; // 返回默认值，避免逻辑崩溃
+        }
+
+        // 返回ChartRunner中计算好的游戏进行时间
+        return ChartRunner.Instance.currentPlayTime;
     }
 }
 #endregion
