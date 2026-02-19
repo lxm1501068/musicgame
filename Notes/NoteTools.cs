@@ -92,12 +92,12 @@ public class DropToCommand : ShiftCommand
 
     // 判定结果移到这里（不再依赖NoteData）
     public JudgeResult judgeResult = JudgeResult.None;
-    public InputManager input;    // 输入检测
 
     // 构造函数
-    public DropToCommand(NoteData note, Command cmd, int KeyIndex, InputManager input) : base(note, cmd)
+    public DropToCommand(NoteData note, Command cmd, int KeyIndex) : base(note, cmd)
     {
-        this.input = input;
+        this.note = note; // 关联NoteData
+        this.endTime = cmd.timeB; // 判定基准时间
         this.KeyIndex = KeyIndex; // 绑定按键序号
     }
 
@@ -107,7 +107,7 @@ public class DropToCommand : ShiftCommand
         if (note == null || judgeResult != JudgeResult.None) return;
 
         float timeDiff = currentTime - endTime;
-        bool isKeyPressed = input.IsGroupPressed(KeyIndex);
+        bool isKeyPressed = InputManager.Instance.IsGroupPressed(KeyIndex);
 
         // 判定逻辑
         if (isKeyPressed)
@@ -208,8 +208,6 @@ public class NoteTools : MonoBehaviour
     // ===== 核心：单例实现 =====
     public static NoteTools Instance { get; private set; }
 
-    public InputManager input; // 输入检测类（全局唯一）
-
     // 单例初始化（保证全局唯一）
     private void Awake()
     {
@@ -222,31 +220,6 @@ public class NoteTools : MonoBehaviour
         {
             Destroy(gameObject); // 重复实例直接销毁
         }
-
-        // 校验InputManager引用（避免空指针）
-        if (input == null)
-        {
-            Debug.LogError("NoteTools: 未绑定InputManager！");
-        }
-    }
-
-    // ===== 仅保留：创建指令的工厂方法 =====
-    // 创建Shift指令（返回实例，交给Note Object持有）
-    public ShiftCommand CreateShiftCommand(NoteData note, Command cmd)
-    {
-        return new ShiftCommand(note, cmd);
-    }
-
-    // 创建DropTo指令（返回实例，交给Note Object持有）
-    public DropToCommand CreateDropToCommand(NoteData note, Command cmd)
-    {
-        return new DropToCommand(note, cmd);
-    }
-
-    // 创建Move指令（返回实例，交给Note Object持有）
-    public MoveCommand CreateMoveCommand(NoteData note, string jsonPath)
-    {
-        return new MoveCommand(note, jsonPath);
     }
 }
 #endregion

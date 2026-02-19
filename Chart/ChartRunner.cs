@@ -1,4 +1,3 @@
-//2026-02-19
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -68,11 +67,25 @@ public class ChartRunner : MonoBehaviour
 
             // 创建音符实例（初始隐藏）
             GameObject noteObj = Instantiate(notePrefab, noteParent);
-            NoteBehaviour noteBehaviour = noteObj.GetComponent<NoteBehaviour>();
+            // 1. 获取/创建NoteData组件（确保音符对象挂载NoteData）
+            NoteData noteData = noteObj.GetComponent<NoteData>();
+            if (noteData == null)
+            {
+                noteData = noteObj.AddComponent<NoteData>();
+            }
 
-            // 初始化音符：传递指令数据
-            noteBehaviour.Init(cmd);
+            // 2. 初始化NoteData数据（从Command映射到NoteData字段）
+            InitNoteData(noteData, cmd);
+
+            // 3. （可选）如果音符需要绑定指令，初始化指令列表
+            if (noteData.commands == null)
+            {
+                noteData.commands = new List<Command>();
+            }
+            noteData.commands.Add(cmd);
+
             allNotes.Add(noteObj);
+            noteObj.SetActive(false); // 初始隐藏，待游戏运行时显示
 
             Debug.Log($"ChartRunner: 预创建音符 ID:{cmd.num} 类型:{cmd.type} 触发时间:{cmd.timeA}");
         }
@@ -82,19 +95,18 @@ public class ChartRunner : MonoBehaviour
     }
 
     /// <summary>
-    /// 清理所有预创建的音符（供GameManager调用）
+    /// 初始化NoteData数据（从Command映射字段）
     /// </summary>
-    public void CleanAllNotes()
+    /// <param name="noteData">要初始化的NoteData</param>
+    /// <param name="cmd">谱面指令数据</param>
+    private void InitNoteData(NoteData noteData, Command cmd)
     {
-        // 销毁所有音符对象
-        foreach (GameObject note in allNotes)
-        {
-            if (note != null) Destroy(note);
-        }
-        // 重置状态
-        allNotes.Clear();
-        IsNotesPreCreated = false;
-        Debug.Log("ChartRunner: 所有音符已清理");
+        // 映射NoteTools.cs中NoteData的核心字段
+        noteData.NoteIndex = cmd.num;          // 音符序号（对应cmd.num）
+        noteData.KeyIndex = cmd.keyIndex;      // 键序号（需确保Command有keyIndex字段）
+        noteData.x = cmd.x1;                   // 初始X坐标（从cmd的x1读取）
+        noteData.y = cmd.y1;                   // 初始Y坐标（从cmd的y1读取）
+        noteData.isVisible = false;            // 初始隐藏，待时机显示
     }
     #endregion
 }

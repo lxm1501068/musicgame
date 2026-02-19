@@ -10,8 +10,7 @@ using System.Collections.Generic;
 public class Flick : MonoBehaviour
 {
     [Header("核心关联（必须配置）")]
-    public NoteData noteData;          // 关联NoteTools的核心音符数据
-    public NoteTools noteTools;        // 关联NoteTools管理器（获取InputManager和判定阈值）
+    public NoteData noteData;
 
     [Header("视觉表现")]
     [Tooltip("未判定时的默认精灵")]
@@ -52,20 +51,6 @@ public class Flick : MonoBehaviour
         if (spriteRenderer == null)
         {
             Debug.LogError($"[{gameObject.name}] Flick组件缺失SpriteRenderer！");
-            enabled = false;
-            return;
-        }
-
-        if (noteTools == null)
-        {
-            Debug.LogError($"[{gameObject.name}] Flick组件未关联NoteTools实例！");
-            enabled = false;
-            return;
-        }
-
-        if (noteTools.input == null)
-        {
-            Debug.LogError($"[{gameObject.name}] NoteTools未配置InputManager！");
             enabled = false;
             return;
         }
@@ -113,7 +98,7 @@ public class Flick : MonoBehaviour
         if (isJudged || hasSwitchedSprite) return;
 
         // 获取当前音乐时间（复用NoteTools的时间逻辑，保证全局时间统一）
-        float currentMusicTime = noteTools.GetComponent<NoteTools>().GetCurrentMusicTime();
+        float currentMusicTime = GameManager.Instance.CurrentPlayTime;
         
         // 执行Flick核心判定
         CheckFlickJudge(currentMusicTime);
@@ -131,7 +116,7 @@ public class Flick : MonoBehaviour
     /// <summary>
     /// 检测Flick判定条件
     /// </summary>
-    /// <param name="currentTime">当前音乐时间（来自NoteTools）</param>
+    /// <param name="currentTime">当前音乐时间）</param>
     private void CheckFlickJudge(float currentTime)
     {
         // 计算时间差（当前时间 - 判定基准时间）
@@ -162,7 +147,7 @@ public class Flick : MonoBehaviour
     /// </summary>
     private bool IsKeyTriggered(int keyIndex)
     {
-        return noteTools.input.IsGroupPressed(keyIndex) || noteTools.input.IsGroupHeld(keyIndex);
+        return InputManager.Instance.IsGroupPressed(keyIndex) || InputManager.Instance.IsGroupHeld(keyIndex);
     }
 
     /// <summary>
@@ -242,62 +227,6 @@ public class Flick : MonoBehaviour
         yield return new WaitForSeconds(destroyDelay);
         Destroy(gameObject);
         Debug.Log($"[{gameObject.name}] Flick音符已延迟{destroyDelay}秒销毁");
-    }
-    #endregion
-
-    #region 工具方法：重置状态 + 快捷创建
-    /// <summary>
-    /// 重置Flick音符状态（重玩时调用）
-    /// </summary>
-    public void ResetFlickState()
-    {
-        // 停止销毁协程
-        if (destroyCoroutine != null)
-        {
-            StopCoroutine(destroyCoroutine);
-            destroyCoroutine = null;
-        }
-
-        // 重置判定状态
-        isJudged = false;
-        judgeResult = JudgeResult.None;
-        hasSwitchedSprite = false;
-
-        // 重置视觉和激活状态
-        spriteRenderer.sprite = defaultFlickSprite;
-        gameObject.SetActive(true);
-
-        // 同步NoteData坐标到物体
-        transform.position = new Vector2(noteData.x, noteData.y);
-    }
-
-    /// <summary>
-    /// 快捷创建Flick音符（适配NoteTools的NoteData结构）
-    /// </summary>
-    public static Flick CreateFlickNote(Transform parent, Vector2 position, NoteTools noteTools, float judgeTime)
-    {
-        GameObject flickObj = new GameObject($"Flick_Note_Key11");
-        flickObj.transform.SetParent(parent);
-        flickObj.transform.position = position;
-
-        // 添加核心组件
-        Flick flick = flickObj.AddComponent<Flick>();
-        flick.noteTools = noteTools;
-        flick.judgeTime = judgeTime;
-
-        // 初始化NoteData（严格对齐NoteTools的结构）
-        flick.noteData = new NoteData()
-        {
-            KeyIndex = 11,          // Flick默认绑定按键11
-            x = position.x,
-            y = position.y,
-            isVisible = true
-        };
-
-        // 默认有效按键组
-        flick.validOtherKeyIndices = new List<int>() { 1, 2, 3 };
-
-        return flick;
     }
     #endregion
 

@@ -81,7 +81,7 @@ public class Dtap : MonoBehaviour
         CreateTapNoteObjects();
 
         // 初始化Tap1的DropTo判定逻辑（复用NoteTools的判定规则）
-        tap1DropToCmd = new DropToCommand(noteData, dropToCmd);
+        tap1DropToCmd = new DropToCommand(noteData, dropToCmd, noteData.KeyIndex);
         noteTools.CreateDropToCommand(noteData, dropToCmd); // 注册到NoteTools驱动移动
 
         // 初始显示默认精灵
@@ -123,7 +123,7 @@ public class Dtap : MonoBehaviour
         // 两次判定完成/已更新精灵 → 跳过逻辑
         if ((isTap1Judged && isTap2Judged) || hasUpdatedSprite) return;
 
-        float currentMusicTime = noteTools.GetCurrentMusicTime(); // 统一使用NoteTools的音乐时间
+        float currentMusicTime = GameManager.Instance.CurrentPlayTime;
 
         // 第一步：处理Tap1的判定（复用DropToCommand完整规则）
         if (!isTap1Judged)
@@ -157,7 +157,7 @@ public class Dtap : MonoBehaviour
         if (tap1Result != JudgeResult.None) return;
 
         // 执行DropTo判定逻辑（结果写入tap1DropToCmd.judgeResult）
-        tap1DropToCmd.Judge(currentTime);
+        tap1DropToCmd.Judge(currentTime, noteData.KeyIndex);
         tap1Result = tap1DropToCmd.judgeResult;
 
         // Tap1判定完成，记录时间

@@ -55,13 +55,6 @@ public class Drag : MonoBehaviour
             return;
         }
 
-        if (noteTools.input == null)
-        {
-            Debug.LogError($"[{gameObject.name}] Drag组件：NoteTools未绑定InputManager！");
-            enabled = false;
-            return;
-        }
-
         // 初始化NoteData（轻量化结构）
         if (noteData == null)
         {
@@ -97,7 +90,7 @@ public class Drag : MonoBehaviour
         if (isJudged || hasSwitchedSprite) return;
 
         // 获取NoteTools统一管理的音乐时间（替代直接使用Time.time）
-        float currentMusicTime = noteTools.GetCurrentMusicTime();
+        float currentMusicTime = GameManager.Instance.CurrentPlayTime;
         CheckDragJudge(currentMusicTime);
 
         // 判定完成后执行精灵切换和延迟销毁
@@ -128,8 +121,8 @@ public class Drag : MonoBehaviour
         }
 
         // 2. 检测输入（按下/按住任一有效，需InputManager实现IsGroupHeld）
-        bool isKeyPressed = noteTools.input.IsGroupPressed(noteData.KeyIndex);
-        bool isKeyHeld = noteTools.input.IsGroupHeld(noteData.KeyIndex);
+        bool isKeyPressed = InputManager.Instance.IsGroupPressed(noteData.KeyIndex);
+        bool isKeyHeld = InputManager.Instance.IsGroupHeld(noteData.KeyIndex);
 
         if (isKeyPressed || isKeyHeld)
         {
@@ -219,7 +212,7 @@ public class Drag : MonoBehaviour
     /// <param name="keyIndex">按键序号</param>
     /// <param name="judgeTime">判定基准时间（音乐时间）</param>
     /// <returns>创建的Drag组件</returns>
-    public static Drag CreateDragNote(Transform parent, Vector2 position, NoteTools noteTools, int keyIndex, float judgeTime)
+    public static Drag CreateDragNote(Transform parent, Vector2 position, int keyIndex, float judgeTime)
     {
         GameObject dragObj = new GameObject($"Drag_Note_Key{keyIndex}");
         dragObj.transform.SetParent(parent);
@@ -227,7 +220,6 @@ public class Drag : MonoBehaviour
 
         // 添加组件并初始化核心参数
         Drag drag = dragObj.AddComponent<Drag>();
-        drag.noteTools = noteTools;
         drag.judgeTime = judgeTime;
         drag.noteData = new NoteData()
         {

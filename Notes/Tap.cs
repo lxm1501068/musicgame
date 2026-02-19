@@ -39,13 +39,6 @@ public class Tap : MonoBehaviour
             return;
         }
 
-        if (noteTools == null)
-        {
-            Debug.LogError($"[{gameObject.name}] Tap组件：未引用NoteTools实例！");
-            enabled = false;
-            return;
-        }
-
         // 初始显示默认精灵
         if (defaultTapSprite != null)
         {
@@ -56,7 +49,7 @@ public class Tap : MonoBehaviour
             Debug.LogWarning($"[{gameObject.name}] Tap组件：未设置默认Tap精灵！");
         }
 
-        // 初始化NoteData（适配新版字段：仅keyIndex/x/y/isVisible）
+        // 初始化NoteData）
         if (noteData == null)
         {
             noteData = new NoteData();
@@ -130,77 +123,6 @@ public class Tap : MonoBehaviour
                 spriteRenderer.sprite = defaultTapSprite;
             }
         }
-    }
-
-    /// <summary>
-    /// 手动重置Tap音符状态（适配新版：重置DropTo指令判定结果）
-    /// </summary>
-    public void ResetTapState()
-    {
-        // 停止正在运行的销毁协程
-        if (destroyCoroutine != null)
-        {
-            StopCoroutine(destroyCoroutine);
-            destroyCoroutine = null;
-        }
-
-        hasSwitchedSprite = false;
-        // 重置绑定指令的判定结果（而非NoteData）
-        if (bindDropToCommand != null)
-        {
-            bindDropToCommand.judgeResult = JudgeResult.None;
-        }
-        spriteRenderer.sprite = defaultTapSprite;
-        gameObject.SetActive(true);
-        
-        // 重置坐标到NoteData初始值
-        if (noteData != null)
-        {
-            transform.position = new Vector2(noteData.x, noteData.y);
-        }
-    }
-
-    /// <summary>
-    /// 快捷创建Tap音符（适配新版NoteTools：创建并绑定DropToCommand）
-    /// </summary>
-    /// <param name="parent">父节点</param>
-    /// <param name="position">初始位置</param>
-    /// <param name="noteTools">NoteTools实例</param>
-    /// <param name="keyIndex">按键序号</param>
-    /// <param name="judgeTime">判定时间（对应DropToCommand的endTime）</param>
-    /// <param name="cmd">DropTo指令的原始Command数据</param>
-    public static Tap CreateTapNote(Transform parent, Vector2 position, NoteTools noteTools, int keyIndex, float judgeTime, Command cmd)
-    {
-        GameObject tapObj = new GameObject($"Tap_Note_Key{keyIndex}");
-        tapObj.transform.SetParent(parent);
-        tapObj.transform.position = position;
-
-        Tap tap = tapObj.AddComponent<Tap>();
-        tap.noteTools = noteTools;
-        
-        // 初始化新版NoteData
-        tap.noteData = new NoteData()
-        {
-            KeyIndex = keyIndex,
-            x = position.x,
-            y = position.y,
-            isVisible = true
-        };
-
-        // 创建并绑定DropToCommand（核心适配点）
-        noteTools.CreateDropToCommand(tap.noteData, cmd);
-        // 找到刚创建的DropToCommand并绑定到Tap组件
-        var dropToCmd = noteTools.GetComponent<NoteTools>()._dropToCommands.FindLast(c => c.note == tap.noteData);
-        if (dropToCmd != null)
-        {
-            tap.bindDropToCommand = dropToCmd;
-        }
-        else
-        {
-            Debug.LogError($"[{tapObj.name}] 创建Tap音符时未找到绑定的DropToCommand！");
-        }
-
-        return tap;
     }
 
     // 物体被销毁时清理协程
