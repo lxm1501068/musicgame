@@ -2,139 +2,217 @@ using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 
-/// <summary>
-/// Flick音符组件：基于NoteTools体系实现，判定窗口±0.3秒内需同时触发按键11 + 其他任意有效按键
-/// 核心适配：对齐NoteTools的NoteData结构、InputManager调用、判定阈值体系
-/// </summary>
 [RequireComponent(typeof(SpriteRenderer))]
 public class Flick : MonoBehaviour
 {
-    [Header("核心关联（必须配置）")]
+    [Header("核心关联")]
     public NoteData noteData;
 
-    [Header("视觉表现")]
-    [Tooltip("未判定时的默认精灵")]
+    [Header("判定对应的精灵图片")]
     public Sprite defaultFlickSprite;
-    [Tooltip("Perfect判定（±0.1秒）精灵")]
     public Sprite perfectFlickSprite;
-    [Tooltip("Good判定（±0.1~±0.2秒）精灵")]
     public Sprite goodFlickSprite;
-    [Tooltip("Bad判定（±0.2~±0.3秒）精灵")]
     public Sprite badFlickSprite;
-    [Tooltip("Miss判定（超时/按键不满足）精灵")]
     public Sprite missFlickSprite;
 
-    [Header("Flick专属配置")]
-    [Tooltip("判定完成后延迟销毁时间（秒）")]
+    [Header("销毁设置")]
     public float destroyDelay = 0.2f;
-    [Tooltip("除按键11外的有效触发按键组")]
+
+    [Header("Flick专属配置")]
     public List<int> validOtherKeyIndices = new List<int>() { 1, 2, 3 };
-    [Tooltip("Flick判定基准时间（音乐时间，对应NoteTools的endTime逻辑）")]
-    public float judgeTime;            // 替代原NoteData的endTime（新NoteData无该字段）
+    public float judgeTime;
 
-    // 内部状态
-    private bool isJudged = false;                  // 是否完成判定
-    private JudgeResult judgeResult = JudgeResult.None; // 判定结果（复用NoteTools的枚举）
-    private SpriteRenderer spriteRenderer;          // 精灵渲染器缓存
-    private Coroutine destroyCoroutine;             // 延迟销毁协程
-    private bool hasSwitchedSprite = false;         // 是否已切换判定结果精灵
+    private SpriteRenderer spriteRenderer;
+    private bool hasSwitchedSprite = false;
+    private bool isJudged = false;
+    private JudgeResult judgeResult = JudgeResult.None;
 
-    // 判定阈值（复用NoteTools的DropToCommand阈值，保证全局一致）
-    private float perfectThreshold => 0.1f; // 与DropToCommand.perfectThreshold对齐
-    private float goodThreshold => 0.2f;    // 与DropToCommand.goodThreshold对齐
-    private float badThreshold => 0.3f;     // 与DropToCommand.badThreshold对齐
+    // 保留指令缓存（Flick需要支持Shift/Move/DropTo指令）
+    private DropToCommand dropToCommand;
+    private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
+    private List<MoveCommand> moveCommands = new List<MoveCommand>();
+
+    // 判定阈值（复用Tap风格的写法）
+    private float perfectThreshold => 0.1f;
+    private float goodThreshold => 0.2f;
+    private float badThreshold => 0.3f;
 
     void Awake()
     {
-        // 1. 缓存核心组件 + 安全校验
         spriteRenderer = GetComponent<SpriteRenderer>();
+        
         if (spriteRenderer == null)
         {
-            Debug.LogError($"[{gameObject.name}] Flick组件缺失SpriteRenderer！");
+            Debug.LogError($"[{gameObject.name}] Flick组件：未找到SpriteRenderer组件！");
             enabled = false;
             return;
         }
 
-        // 2. 初始化NoteData（保证与NoteTools数据结构一致）
-        if (noteData == null)
-        {
-            noteData = new NoteData()
-            {
-                NoteIndex = 11, // Flick默认绑定按键11
-                x = transform.position.x,
-                y = transform.position.y,
-                isVisible = true
-            };
-            Debug.LogWarning($"[{gameObject.name}] 自动创建NoteData，默认绑定按键11");
-        }
-        else
-        {
-            // 同步NoteData坐标到物体位置
-            transform.position = new Vector2(noteData.x, noteData.y);
-        }
-
-        // 3. 校验有效按键组
-        if (validOtherKeyIndices.Count == 0)
-        {
-            validOtherKeyIndices = new List<int>() { 1, 2, 3 };
-            Debug.LogWarning($"[{gameObject.name}] 有效按键组为空，默认添加1/2/3");
-        }
-        validOtherKeyIndices.RemoveAll(x => x == 11); // 强制排除按键11
-
-        // 4. 初始化默认精灵
         if (defaultFlickSprite != null)
         {
             spriteRenderer.sprite = defaultFlickSprite;
         }
         else
         {
-            Debug.LogWarning($"[{gameObject.name}] 未设置默认Flick精灵");
+            Debug.LogWarning($"[{gameObject.name}] Flick组件：未设置默认Flick精灵！");
         }
+
+        if (noteData == null)
+        {
+            // 自动创建NoteData（兼容未赋值场景）
+            noteData = new NoteData()
+            {
+                NoteIndex = 11,
+                x = transform.position.x,
+                y = transform.position.y,
+                isVisible = true,
+                commands = new List<Command>()
+            };
+            Debug.LogWarning($"[{gameObject.name}] Flick组件：NoteData未赋值，自动创建默认实例！");
+        }
+        else
+        {
+            // 初始化位置（从NoteData读取）
+            transform.position = new Vector2(noteData.x, noteData.y);
+        }
+
+        // 校验有效按键组
+        if (validOtherKeyIndices.Count == 0)
+        {
+            validOtherKeyIndices = new List<int>() { 1, 2, 3 };
+            Debug.LogWarning($"[{gameObject.name}] Flick组件：有效按键组为空，默认添加1/2/3");
+        }
+        validOtherKeyIndices.RemoveAll(x => x == 11); // 移除11号键（Flick核心键）
+
+        // 初始化指令（模仿Tap的InitCommands逻辑）
+        InitCommands();
     }
 
     void Update()
     {
-        // 已判定/已切换精灵 → 跳过逻辑
-        if (isJudged || hasSwitchedSprite) return;
+        if (hasSwitchedSprite)
+        {
+            SyncPosition();
+            return;
+        }
 
-        // 获取当前音乐时间（复用NoteTools的时间逻辑，保证全局时间统一）
-        float currentMusicTime = GameManager.Instance.CurrentPlayTime;
-        
-        // 执行Flick核心判定
-        CheckFlickJudge(currentMusicTime);
+        if (GameManager.Instance == null) return;
+        float currentTime = GameManager.Instance.CurrentPlayTime;
 
-        // 判定完成后切换精灵 + 启动延迟销毁
+        // 执行所有指令（完全模仿Tap的执行顺序）
+        ExecuteShiftCommands(currentTime);
+        ExecuteMoveCommands(currentTime);
+        ExecuteDropToJudge(currentTime);
+
+        // 检测Flick核心判定
+        CheckFlickJudge(currentTime);
+
+        // 判定完成后切换精灵 + 启动延迟销毁（模仿Tap的逻辑）
         if (isJudged && !hasSwitchedSprite)
         {
-            SwitchFlickSprite();
+            SwitchJudgeSprite(judgeResult);
             hasSwitchedSprite = true;
-            StartDelayDestroy();
+            StartCoroutine(DelayDestroyNote());
+        }
+
+        SyncPosition();
+    }
+
+    // 初始化指令（完全模仿Tap的InitCommands风格）
+    private void InitCommands()
+    {
+        if (noteData.commands == null || noteData.commands.Count == 0)
+        {
+            Debug.LogWarning($"[{gameObject.name}] Flick组件：NoteData无关联的Command！");
+            return;
+        }
+
+        // 模仿Tap：取第一个Command（ChartRunner保证仅绑定一个首次出现的Command）
+        Command cmd = noteData.commands[0];
+
+        // 1. 初始化DropTo指令（Flick核心判定逻辑）
+        dropToCommand = new DropToCommand(noteData, cmd, noteData.KeyIndex);
+        judgeTime = cmd.timeB; // 优先使用指令的endTime作为判定时间
+        Debug.Log($"[{gameObject.name}] Flick音符ID:{cmd.num} 初始化DropTo指令（判定时间：{judgeTime}）");
+
+        // 2. 初始化Shift指令（Flick支持x1/x2/y1/y2的移动逻辑）
+        if (cmd.x2 != 0 || cmd.y2 != 0)
+        {
+            shiftCommands.Add(new ShiftCommand(noteData, cmd));
+            Debug.Log($"[{gameObject.name}] Flick音符ID:{cmd.num} 初始化Shift指令（目标坐标：{cmd.x2},{cmd.y2}）");
+        }
+
+        // 3. 初始化Move指令（Flick支持JSON帧移动）
+        if (!string.IsNullOrEmpty(cmd.filename))
+        {
+            moveCommands.Add(new MoveCommand(noteData, cmd.filename));
+            Debug.Log($"[{gameObject.name}] Flick音符ID:{cmd.num} 初始化Move指令（JSON路径：{cmd.filename}）");
         }
     }
 
-    #region 核心逻辑：Flick判定（11+其他按键 + 时间窗口）
-    /// <summary>
-    /// 检测Flick判定条件
-    /// </summary>
-    /// <param name="currentTime">当前音乐时间）</param>
+    // 执行Shift指令（完全模仿Tap）
+    private void ExecuteShiftCommands(float currentTime)
+    {
+        foreach (var shiftCmd in shiftCommands)
+        {
+            shiftCmd.UpdatePosition(currentTime, Time.deltaTime);
+        }
+    }
+
+    // 执行Move指令（完全模仿Tap）
+    private void ExecuteMoveCommands(float currentTime)
+    {
+        foreach (var moveCmd in moveCommands)
+        {
+            moveCmd.UpdatePosition(currentTime);
+        }
+    }
+
+    // 执行DropTo判定（模仿Tap的写法）
+    private void ExecuteDropToJudge(float currentTime)
+    {
+        if (dropToCommand != null && noteData.commands.Count > 0)
+        {
+            Command cmd = noteData.commands[0];
+            dropToCommand.Judge(currentTime, cmd.key_name);
+
+            // 同步DropTo指令的判定结果到Flick
+            if (dropToCommand.judgeResult != JudgeResult.None && !isJudged)
+            {
+                judgeResult = dropToCommand.judgeResult;
+                isJudged = true;
+            }
+        }
+    }
+
+    // 同步坐标（完全复用Tap的SyncPosition逻辑）
+    private void SyncPosition()
+    {
+        if (noteData == null) return;
+        transform.position = new Vector2(noteData.x, noteData.y);
+    }
+
+    // Flick核心判定逻辑（封装为独立方法）
     private void CheckFlickJudge(float currentTime)
     {
-        // 计算时间差（当前时间 - 判定基准时间）
+        // 若DropTo指令已判定，跳过自定义判定
+        if (dropToCommand != null && dropToCommand.judgeResult != JudgeResult.None) return;
+
         float timeDiff = currentTime - judgeTime;
         float absTimeDiff = Mathf.Abs(timeDiff);
 
-        // 1. 超出±0.3秒判定窗口 → 直接Miss
+        // 超出判定窗口 → Miss
         if (absTimeDiff > badThreshold)
         {
             SetJudgeResult(JudgeResult.Miss, timeDiff);
             return;
         }
 
-        // 2. 检测按键条件：①按键11按下/按住 ②其他任意有效按键按下/按住
+        // 检测Flick按键条件（11+其他按键）
         bool isKey11Triggered = IsKeyTriggered(11);
         bool isOtherKeyTriggered = IsAnyOtherKeyTriggered();
 
-        // 3. 双条件满足 → 判定有效，细分等级
+        // 按键条件满足 → 判定等级
         if (isKey11Triggered && isOtherKeyTriggered)
         {
             JudgeResult result = GetJudgeResultByTimeDiff(absTimeDiff);
@@ -142,17 +220,13 @@ public class Flick : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 检测单个按键组是否触发（按下/按住）
-    /// </summary>
+    // 检测单个按键是否触发
     private bool IsKeyTriggered(int keyIndex)
     {
         return InputManager.Instance.IsGroupPressed(keyIndex) || InputManager.Instance.IsGroupHeld(keyIndex);
     }
 
-    /// <summary>
-    /// 检测其他任意有效按键是否触发
-    /// </summary>
+    // 检测其他有效按键是否触发
     private bool IsAnyOtherKeyTriggered()
     {
         foreach (int keyIndex in validOtherKeyIndices)
@@ -162,33 +236,25 @@ public class Flick : MonoBehaviour
         return false;
     }
 
-    /// <summary>
-    /// 根据时间差获取判定等级（与NoteTools的DropToCommand逻辑完全对齐）
-    /// </summary>
+    // 根据时间差获取判定结果
     private JudgeResult GetJudgeResultByTimeDiff(float absTimeDiff)
     {
         if (absTimeDiff <= perfectThreshold) return JudgeResult.Perfect;
         if (absTimeDiff <= goodThreshold) return JudgeResult.Good;
         if (absTimeDiff <= badThreshold) return JudgeResult.Bad;
-        return JudgeResult.Miss; // 兜底
+        return JudgeResult.Miss;
     }
 
-    /// <summary>
-    /// 设置判定结果并标记完成
-    /// </summary>
+    // 设置判定结果
     private void SetJudgeResult(JudgeResult result, float timeDiff)
     {
         judgeResult = result;
         isJudged = true;
         Debug.Log($"[{gameObject.name}] Flick判定结果：{result} | 时间差：{timeDiff:F2}s");
     }
-    #endregion
 
-    #region 视觉表现：精灵切换 + 延迟销毁
-    /// <summary>
-    /// 根据判定结果切换精灵
-    /// </summary>
-    private void SwitchFlickSprite()
+    // 切换判定精灵（完全模仿Tap的SwitchJudgeSprite逻辑）
+    private void SwitchJudgeSprite(JudgeResult judgeResult)
     {
         Sprite targetSprite = judgeResult switch
         {
@@ -205,40 +271,21 @@ public class Flick : MonoBehaviour
         }
         else
         {
-            Debug.LogError($"[{gameObject.name}] {judgeResult}判定对应的精灵未配置！");
+            Debug.LogError($"[{gameObject.name}] Flick组件：{judgeResult}对应的精灵未赋值！");
             spriteRenderer.sprite = defaultFlickSprite;
         }
     }
 
-    /// <summary>
-    /// 启动延迟销毁协程
-    /// </summary>
-    private void StartDelayDestroy()
-    {
-        if (destroyCoroutine != null) StopCoroutine(destroyCoroutine);
-        destroyCoroutine = StartCoroutine(DelayDestroyCoroutine());
-    }
-
-    /// <summary>
-    /// 延迟销毁音符物体
-    /// </summary>
-    private IEnumerator DelayDestroyCoroutine()
+    // 延迟销毁（完全复用Tap的DelayDestroyNote逻辑）
+    private IEnumerator DelayDestroyNote()
     {
         yield return new WaitForSeconds(destroyDelay);
         Destroy(gameObject);
-        Debug.Log($"[{gameObject.name}] Flick音符已延迟{destroyDelay}秒销毁");
     }
-    #endregion
 
-    #region 生命周期：清理协程
+    // 生命周期（模仿Tap的OnDestroy）
     void OnDestroy()
     {
-        // 防止协程内存泄漏
-        if (destroyCoroutine != null)
-        {
-            StopCoroutine(destroyCoroutine);
-            destroyCoroutine = null;
-        }
+        StopAllCoroutines();
     }
-    #endregion
 }

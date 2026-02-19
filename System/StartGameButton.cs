@@ -49,8 +49,11 @@ public class StartGameButton : MonoBehaviour
             return;
         }
 
-        // 核心：调用GameManager的开始游戏方法
-        gameManager.StartGame();
+        // 修复核心：替换为GameManager实际存在的方法
+        // 步骤1：预创建所有音符（必须先执行）
+        gameManager.PreCreateAllNotes();
+        // 步骤2：开始播放谱面
+        gameManager.PlayChart();
 
         // 关键修改：点击后直接隐藏按钮（整 GameObject 不可见）
         gameObject.SetActive(false);

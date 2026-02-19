@@ -13,6 +13,7 @@ public class GameManager : MonoBehaviour
     public float chartStartTime { get; private set; } // 播放起始时间锚点
     private float pauseAccumulator = 0; // 暂停时长累计（抵消暂停的时间差）
     private float lastPauseTime = 0; // 上次暂停的时间
+    private float pausedPlayTime = 0; // 新增：记录暂停瞬间的播放时间
 
     // 供音符访问的「精准播放时间」（排除暂停）
     public float CurrentPlayTime
@@ -21,8 +22,8 @@ public class GameManager : MonoBehaviour
         {
             if (!IsPlaying)
             {
-                // 暂停时返回“暂停瞬间的播放时间”，避免音符继续移动
-                return lastPauseTime - chartStartTime - pauseAccumulator;
+                // 修复：暂停时返回「暂停瞬间的播放时间」，而非动态计算
+                return pausedPlayTime;
             }
             // 播放中：当前时间 - 起始时间 - 累计暂停时长
             return Time.time - chartStartTime - pauseAccumulator;
@@ -31,18 +32,30 @@ public class GameManager : MonoBehaviour
 
     private void Awake()
     {
-        // 单例初始化
-        if (Instance == null) Instance = this;
-        else Destroy(gameObject);
+        // 修复：严谨的单例模式（跨场景保留+防止重复创建）
+        if (Instance == null)
+        {
+            Instance = this;
+            DontDestroyOnLoad(gameObject); // 跨场景保留单例
+        }
+        else
+        {
+            Destroy(gameObject);
+            return;
+        }
 
         // 校验ChartRunner引用（避免空引用）
         if (chartRunner == null)
         {
             Debug.LogError("GameManager: 未赋值ChartRunner引用！请在Unity编辑器中绑定。");
         }
+
+        // 修复：初始化暂停相关变量，避免首次暂停时值为0导致计算错误
+        lastPauseTime = Time.time;
+        pausedPlayTime = 0;
     }
 
-    #region 新增：谱面播放控制核心方法（从ChartRunner迁移）
+    #region 谱面播放控制核心方法
     /// <summary>
     /// 开始播放谱面（需先调用PreCreateAllNotes预创建音符）
     /// </summary>
@@ -59,11 +72,18 @@ public class GameManager : MonoBehaviour
             Debug.LogError("GameManager.PlayChart: 未预创建音符，请先调用PreCreateAllNotes！");
             return;
         }
+        // 修复：防止重复调用PlayChart导致时间轴错乱
+        if (IsPlaying)
+        {
+            Debug.LogWarning("GameManager.PlayChart: 谱面已在播放中，无需重复调用！");
+            return;
+        }
 
         // 重置播放状态
         IsPlaying = true;
         chartStartTime = Time.time;
         pauseAccumulator = 0; // 清空暂停累计时长
+        pausedPlayTime = 0;   // 重置暂停时的播放时间
         Debug.Log("GameManager: 谱面开始播放！");
     }
 
@@ -77,24 +97,31 @@ public class GameManager : MonoBehaviour
             Debug.LogError("GameManager.TogglePlay: ChartRunner引用为空！");
             return;
         }
+        if (!chartRunner.IsNotesPreCreated)
+        {
+            Debug.LogError("GameManager.TogglePlay: 未预创建音符，无法暂停/恢复！");
+            return;
+        }
 
         IsPlaying = !IsPlaying;
         if (IsPlaying)
         {
-            // 恢复播放：累计暂停时长
+            // 恢复播放：累计暂停时长，修正起始时间锚点
             pauseAccumulator += Time.time - lastPauseTime;
-            Debug.Log("GameManager: 谱面恢复播放");
+            chartStartTime = Time.time - (pausedPlayTime + pauseAccumulator);
+            Debug.Log($"GameManager: 谱面恢复播放 | 累计暂停时长：{pauseAccumulator:F2}秒");
         }
         else
         {
-            // 暂停播放：记录暂停瞬间的时间
+            // 暂停播放：记录暂停瞬间的绝对时间 + 播放时间
             lastPauseTime = Time.time;
-            Debug.Log("GameManager: 谱面已暂停");
+            pausedPlayTime = CurrentPlayTime; // 关键：保存暂停时的播放时间
+            Debug.Log($"GameManager: 谱面已暂停 | 暂停时播放时间：{pausedPlayTime:F2}秒");
         }
     }
 
     /// <summary>
-    /// 停止播放并清理所有音符
+    /// 停止播放（仅重置状态，不清理音符）
     /// </summary>
     public void StopChart()
     {
@@ -104,14 +131,13 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        // 重置全局播放状态
+        // 仅重置全局播放状态（不清理音符）
         IsPlaying = false;
         pauseAccumulator = 0;
+        lastPauseTime = Time.time;
+        pausedPlayTime = 0;
 
-        // 调用ChartRunner清理音符（核心：ChartRunner仅做具体的音符管理）
-        chartRunner.CleanAllNotes();
-
-        Debug.Log("GameManager: 谱面已停止，所有音符已清理");
+        Debug.Log("GameManager: 谱面已停止，播放状态已重置（未清理音符）");
     }
 
     /// <summary>
@@ -125,6 +151,16 @@ public class GameManager : MonoBehaviour
             return;
         }
         chartRunner.PreCreateAllNotes();
+        Debug.Log("GameManager: 所有音符已预创建完成");
     }
     #endregion
+
+    // 可选：防止意外销毁单例导致空引用
+    private void OnDestroy()
+    {
+        if (Instance == this)
+        {
+            Instance = null;
+        }
+    }
 }

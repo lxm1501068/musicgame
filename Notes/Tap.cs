@@ -1,16 +1,12 @@
 using UnityEngine;
-using System.Collections; 
+using System.Collections;
+using System.Collections.Generic;
 
-/// <summary>
-/// Tap音符组件：绑定到Tap音符GameObject，适配新版NoteTools（判定结果从DropToCommand读取）
-/// </summary>
 [RequireComponent(typeof(SpriteRenderer))]
 public class Tap : MonoBehaviour
 {
     [Header("核心关联")]
     public NoteData noteData;
-    public NoteTools noteTools;
-    public DropToCommand bindDropToCommand;
 
     [Header("判定对应的精灵图片")]
     public Sprite defaultTapSprite;
@@ -20,18 +16,19 @@ public class Tap : MonoBehaviour
     public Sprite missTapSprite;
 
     [Header("销毁设置")]
-    [Tooltip("判定完成后延迟销毁的时间（秒）")]
     public float destroyDelay = 0.2f; 
 
     private SpriteRenderer spriteRenderer;
     private bool hasSwitchedSprite = false;
-    private Coroutine destroyCoroutine; 
+    // 保留Shift/Move指令缓存（Tap需要支持这两类指令）
+    private DropToCommand dropToCommand;
+    private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
+    private List<MoveCommand> moveCommands = new List<MoveCommand>();
 
     void Awake()
     {
         spriteRenderer = GetComponent<SpriteRenderer>();
         
-        // 安全校验
         if (spriteRenderer == null)
         {
             Debug.LogError($"[{gameObject.name}] Tap组件：未找到SpriteRenderer组件！");
@@ -39,7 +36,6 @@ public class Tap : MonoBehaviour
             return;
         }
 
-        // 初始显示默认精灵
         if (defaultTapSprite != null)
         {
             spriteRenderer.sprite = defaultTapSprite;
@@ -49,56 +45,121 @@ public class Tap : MonoBehaviour
             Debug.LogWarning($"[{gameObject.name}] Tap组件：未设置默认Tap精灵！");
         }
 
-        // 初始化NoteData）
         if (noteData == null)
         {
-            noteData = new NoteData();
-            noteData.isVisible = true;
-            Debug.LogWarning($"[{gameObject.name}] Tap组件：未赋值NoteData，已自动创建默认实例！");
+            Debug.LogError($"[{gameObject.name}] Tap组件：NoteData未赋值！");
+            enabled = false;
+            return;
         }
-        // 同步NoteData坐标到物体初始位置
+
+        // 初始化位置（从NoteData读取，ChartRunner已完成Command映射）
         transform.position = new Vector2(noteData.x, noteData.y);
+        // 初始化指令（移除cmd.type检测，直接解析Tap/DTap的Shift/Move/DropTo指令）
+        InitCommands();
     }
 
     void Update()
     {
-        // 1. 已切换过精灵 → 跳过
-        // 2. 未绑定DropTo指令 → 跳过
-        // 3. 指令未完成判定 → 跳过
-        if (hasSwitchedSprite || bindDropToCommand == null || bindDropToCommand.judgeResult == JudgeResult.None)
+        if (hasSwitchedSprite)
         {
-            // 同步NoteData的坐标到物体
-            if (noteData != null)
-            {
-                transform.position = new Vector2(noteData.x, noteData.y);
-            }
+            SyncPosition();
             return;
         }
 
-        // 判定完成，切换对应精灵
-        SwitchJudgeSprite(bindDropToCommand.judgeResult);
-        hasSwitchedSprite = true;
+        if (GameManager.Instance == null) return;
+        float currentTime = GameManager.Instance.CurrentPlayTime;
 
-        // 启动延迟销毁协程
-        if (destroyCoroutine == null)
+        // 执行所有指令（保留Shift/Move，Tap需要支持）
+        ExecuteShiftCommands(currentTime);
+        ExecuteMoveCommands(currentTime);
+        ExecuteDropToJudge(currentTime);
+
+        // 检测判定结果
+        if (dropToCommand != null && dropToCommand.judgeResult != JudgeResult.None)
         {
-            destroyCoroutine = StartCoroutine(DelayDestroyNote());
+            SwitchJudgeSprite(dropToCommand.judgeResult);
+            hasSwitchedSprite = true;
+            StartCoroutine(DelayDestroyNote());
+        }
+
+        SyncPosition();
+    }
+
+    // 初始化指令：移除cmd.type检测（ChartRunner保证仅传入Tap/DTap的Command）
+    // 直接解析Command中的Shift/Move/DropTo逻辑（Tap/DTap的x1/x2/y1/y2对应Shift，filename对应Move）
+    private void InitCommands()
+    {
+        if (noteData.commands == null || noteData.commands.Count == 0)
+        {
+            Debug.LogWarning($"[{gameObject.name}] Tap组件：NoteData无关联的Command！");
+            return;
+        }
+
+        // ChartRunner保证每个Tap音符仅绑定一个首次出现的Command，直接取第一个
+        Command cmd = noteData.commands[0];
+
+        // 1. 初始化DropTo指令（Tap/DTap核心判定逻辑）
+        // 修正：Command中是key_name字段，而非keyIndex
+        dropToCommand = new DropToCommand(noteData, cmd, cmd.key_name);
+
+        // 2. 初始化Shift指令（Tap支持x1/x2/y1/y2的移动逻辑）
+        // 仅当x2/y2有有效值时初始化（避免空移动）
+        if (cmd.x2 != 0 || cmd.y2 != 0)
+        {
+            shiftCommands.Add(new ShiftCommand(noteData, cmd));
+            Debug.Log($"[{gameObject.name}] Tap音符ID:{cmd.num} 初始化Shift指令（目标坐标：{cmd.x2},{cmd.y2}）");
+        }
+
+        // 3. 初始化Move指令（Tap支持JSON帧移动）
+        // 仅当filename不为空时初始化
+        if (!string.IsNullOrEmpty(cmd.filename))
+        {
+            moveCommands.Add(new MoveCommand(noteData, cmd.filename));
+            Debug.Log($"[{gameObject.name}] Tap音符ID:{cmd.num} 初始化Move指令（JSON路径：{cmd.filename}）");
         }
     }
 
-    /// <summary>
-    /// 延迟销毁音符的协程
-    /// </summary>
+    // 执行Shift指令（保留，Tap需要支持）
+    private void ExecuteShiftCommands(float currentTime)
+    {
+        foreach (var shiftCmd in shiftCommands)
+        {
+            shiftCmd.UpdatePosition(currentTime, Time.deltaTime);
+        }
+    }
+
+    // 执行Move指令（保留，Tap需要支持）
+    private void ExecuteMoveCommands(float currentTime)
+    {
+        foreach (var moveCmd in moveCommands)
+        {
+            moveCmd.UpdatePosition(currentTime);
+        }
+    }
+
+    // 执行DropTo判定（修正KeyIndex映射：使用Command的key_name）
+    private void ExecuteDropToJudge(float currentTime)
+    {
+        if (dropToCommand != null && noteData.commands.Count > 0)
+        {
+            Command cmd = noteData.commands[0];
+            dropToCommand.Judge(currentTime, cmd.key_name);
+        }
+    }
+
+    // 同步坐标（Tap的位置由Shift/Move指令修改NoteData后同步）
+    private void SyncPosition()
+    {
+        if (noteData == null) return;
+        transform.position = new Vector2(noteData.x, noteData.y);
+    }
+
     private IEnumerator DelayDestroyNote()
     {
         yield return new WaitForSeconds(destroyDelay);
         Destroy(gameObject);
-        Debug.Log($"[{gameObject.name}] Tap音符已延迟{destroyDelay}秒销毁");
     }
 
-    /// <summary>
-    /// 根据判定结果切换Sprite
-    /// </summary>
     private void SwitchJudgeSprite(JudgeResult judgeResult)
     {
         Sprite targetSprite = judgeResult switch
@@ -113,24 +174,16 @@ public class Tap : MonoBehaviour
         if (targetSprite != null)
         {
             spriteRenderer.sprite = targetSprite;
-            Debug.Log($"[{gameObject.name}] Tap判定：{judgeResult} → 切换精灵完成");
         }
         else
         {
             Debug.LogError($"[{gameObject.name}] Tap组件：{judgeResult}对应的精灵未赋值！");
-            if (defaultTapSprite != null)
-            {
-                spriteRenderer.sprite = defaultTapSprite;
-            }
+            spriteRenderer.sprite = defaultTapSprite;
         }
     }
 
-    // 物体被销毁时清理协程
     void OnDestroy()
     {
-        if (destroyCoroutine != null)
-        {
-            StopCoroutine(destroyCoroutine);
-        }
+        StopAllCoroutines();
     }
 }

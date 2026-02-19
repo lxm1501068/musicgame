@@ -1,9 +1,9 @@
 using UnityEngine;
-using System.IO;
 using System.Collections.Generic;
 
 /// <summary>
 /// Key移动控制组件：处理Key的shift（匀速移动）和move（JSON帧移动）指令
+/// 复用NoteTools的核心移动逻辑，减少冗余
 /// </summary>
 public class Key_move : MonoBehaviour
 {
@@ -35,9 +35,9 @@ public class Key_move : MonoBehaviour
 
     #region 私有状态
     private Transform _keyTransform; // 缓存Key的Transform（控制位置）
-    private Vector2 _currentPos;     // Key当前坐标
-    private List<MoveFrame> _moveFrames; // Move指令的帧数据（复用NoteTools的MoveFrame结构）
-    private bool _isMoveFramesLoaded = false; // Move帧数据是否加载完成
+    private NoteData _keyNoteData;   // 复用NoteData存储Key的位置/状态
+    private ShiftCommand _shiftCmd;  // 复用ShiftCommand处理匀速移动
+    private MoveCommand _moveCmd;    // 复用MoveCommand处理JSON帧移动
     #endregion
 
     #region 生命周期
@@ -49,26 +49,31 @@ public class Key_move : MonoBehaviour
         // 安全校验
         ValidateReferences();
 
-        // 初始化位置
-        _currentPos = initialPos;
-        _keyTransform.position = new Vector3(initialPos.x, initialPos.y, _keyTransform.position.z);
-
-        // 预加载Move指令的JSON帧数据（如果启用）
-        if (useMoveFirst)
+        // 初始化Key的NoteData（模拟音符数据，仅用于存储位置）
+        _keyNoteData = new NoteData
         {
-            LoadMoveFrames();
-        }
+            NoteIndex = keyIndex,
+            KeyIndex = keyIndex,
+            x = initialPos.x,
+            y = initialPos.y,
+            isVisible = true
+        };
+        _keyTransform.position = new Vector3(_keyNoteData.x, _keyNoteData.y, _keyTransform.position.z);
+
+        // 初始化指令（复用NoteTools的指令类）
+        InitCommands();
     }
 
     private void Update()
     {
         if (noteTools == null) return;
 
-        // 替换为实际音乐播放时间（如AudioSource.time）
+        // 替换为实际音乐播放时间（建议替换为AudioSource.time）
         float currentMusicTime = Time.time;
+        float deltaTime = Time.deltaTime;
 
         // 更新Key位置（优先Move指令，其次Shift）
-        UpdateKeyPosition(currentMusicTime);
+        UpdateKeyPosition(currentMusicTime, deltaTime);
     }
     #endregion
 
@@ -98,130 +103,50 @@ public class Key_move : MonoBehaviour
     }
 
     /// <summary>
-    /// 加载Move指令的JSON帧数据（复用NoteTools的JSON解析逻辑）
+    /// 初始化Shift/Move指令（复用NoteTools的指令类）
     /// </summary>
-    private void LoadMoveFrames()
+    private void InitCommands()
     {
-        try
+        // 1. 初始化Shift指令（构造模拟的Command数据）
+        Command shiftCmdData = new Command
         {
-            string fullPath = Path.Combine(Application.streamingAssetsPath, moveJsonPath);
-            if (!File.Exists(fullPath))
-            {
-                Debug.LogError($"[{gameObject.name}] Move指令：JSON文件不存在 → {fullPath}", this);
-                _isMoveFramesLoaded = false;
-                return;
-            }
+            timeA = shiftStartTime,
+            timeB = shiftEndTime,
+            x1 = initialPos.x,
+            y1 = initialPos.y,
+            x2 = shiftTargetPos.x,
+            y2 = shiftTargetPos.y
+        };
+        _shiftCmd = new ShiftCommand(_keyNoteData, shiftCmdData);
 
-            // 读取并解析JSON（复用NoteTools的包装类）
-            string jsonContent = File.ReadAllText(fullPath);
-            NoteTools.MoveFrameList frameList = JsonUtility.FromJson<NoteTools.MoveFrameList>(jsonContent);
-            _moveFrames = frameList?.frames ?? new List<MoveFrame>();
-
-            // 帧数据排序（按时间升序）
-            if (_moveFrames.Count > 0)
-            {
-                _moveFrames.Sort((a, b) => a.time.CompareTo(b.time));
-                _isMoveFramesLoaded = true;
-                Debug.Log($"[{gameObject.name}] Move指令：成功加载{_moveFrames.Count}帧数据", this);
-            }
-            else
-            {
-                Debug.LogWarning($"[{gameObject.name}] Move指令：JSON文件无帧数据", this);
-                _isMoveFramesLoaded = false;
-            }
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogError($"[{gameObject.name}] Move指令：解析JSON失败 → {e.Message}", this);
-            _isMoveFramesLoaded = false;
-        }
-    }
-
-    /// <summary>
-    /// 处理Shift指令：匀速移动Key（基于起始/结束时间）
-    /// </summary>
-    /// <param name="currentTime">当前音乐时间（秒）</param>
-    private void HandleShift(float currentTime)
-    {
-        // 未到起始时间 → 保持初始位置
-        if (currentTime < shiftStartTime) return;
-
-        // 超过结束时间 → 固定在目标位置
-        if (currentTime > shiftEndTime)
-        {
-            _currentPos = shiftTargetPos;
-            _keyTransform.position = new Vector3(shiftTargetPos.x, shiftTargetPos.y, _keyTransform.position.z);
-            return;
-        }
-
-        // 计算移动进度（0→1），匀速移动
-        float progress = (currentTime - shiftStartTime) / (shiftEndTime - shiftStartTime);
-        _currentPos = Vector2.Lerp(_currentPos, shiftTargetPos, progress);
-
-        // 应用位置到Transform
-        _keyTransform.position = new Vector3(_currentPos.x, _currentPos.y, _keyTransform.position.z);
-    }
-
-    /// <summary>
-    /// 处理Move指令：按JSON帧数据插值移动Key
-    /// </summary>
-    /// <param name="currentTime">当前音乐时间（秒）</param>
-    private void HandleMove(float currentTime)
-    {
-        if (!_isMoveFramesLoaded || _moveFrames.Count == 0) return;
-
-        MoveFrame prevFrame = null;
-        MoveFrame nextFrame = null;
-
-        // 找到当前时间所在的帧区间
-        foreach (var frame in _moveFrames)
-        {
-            if (frame.time <= currentTime) prevFrame = frame;
-            else
-            {
-                nextFrame = frame;
-                break;
-            }
-        }
-
-        // 边界处理
-        if (prevFrame == null)
-        {
-            // 早于所有帧 → 取第一帧位置
-            _currentPos = new Vector2(_moveFrames[0].x, _moveFrames[0].y);
-        }
-        else if (nextFrame == null)
-        {
-            // 晚于所有帧 → 取最后一帧位置
-            _currentPos = new Vector2(prevFrame.x, prevFrame.y);
-        }
-        else
-        {
-            // 帧间插值（匀速）
-            float progress = (currentTime - prevFrame.time) / (nextFrame.time - prevFrame.time);
-            float x = Mathf.Lerp(prevFrame.x, nextFrame.x, progress);
-            float y = Mathf.Lerp(prevFrame.y, nextFrame.y, progress);
-            _currentPos = new Vector2(x, y);
-        }
-
-        // 应用位置到Transform
-        _keyTransform.position = new Vector3(_currentPos.x, _currentPos.y, _keyTransform.position.z);
+        // 2. 初始化Move指令（复用NoteTools的MoveCommand）
+        _moveCmd = new MoveCommand(_keyNoteData, moveJsonPath);
     }
 
     /// <summary>
     /// 更新Key位置（优先Move，其次Shift）
     /// </summary>
     /// <param name="currentTime">当前音乐时间（秒）</param>
-    private void UpdateKeyPosition(float currentTime)
+    /// <param name="deltaTime">帧间隔时间</param>
+    private void UpdateKeyPosition(float currentTime, float deltaTime)
     {
-        if (useMoveFirst && _isMoveFramesLoaded && _moveFrames.Count > 0)
+        // 优先执行Move指令
+        if (useMoveFirst && _moveCmd != null)
         {
-            HandleMove(currentTime);
+            _moveCmd.UpdatePosition(currentTime);
         }
-        else
+        // 其次执行Shift指令
+        else if (_shiftCmd != null)
         {
-            HandleShift(currentTime);
+            _shiftCmd.UpdatePosition(currentTime, deltaTime);
         }
+
+        // 将NoteData的位置同步到Transform
+        _keyTransform.position = new Vector3(
+            _keyNoteData.x, 
+            _keyNoteData.y, 
+            _keyTransform.position.z
+        );
     }
     #endregion
 
@@ -237,6 +162,19 @@ public class Key_move : MonoBehaviour
         shiftStartTime = startTime;
         shiftEndTime = endTime > startTime ? endTime : startTime + 1f;
         shiftTargetPos = targetPos;
+
+        // 重新初始化Shift指令
+        Command shiftCmdData = new Command
+        {
+            timeA = shiftStartTime,
+            timeB = shiftEndTime,
+            x1 = _keyNoteData.x,
+            y1 = _keyNoteData.y,
+            x2 = shiftTargetPos.x,
+            y2 = shiftTargetPos.y
+        };
+        _shiftCmd = new ShiftCommand(_keyNoteData, shiftCmdData);
+
         Debug.Log($"[{gameObject.name}] Key_move：更新Shift参数 → 起始{startTime}s，结束{shiftEndTime}s，目标{targetPos}", this);
     }
 
@@ -247,7 +185,7 @@ public class Key_move : MonoBehaviour
     public void ReloadMoveFrames(string newJsonPath)
     {
         moveJsonPath = newJsonPath;
-        LoadMoveFrames();
+        _moveCmd = new MoveCommand(_keyNoteData, moveJsonPath);
     }
 
     /// <summary>
@@ -255,15 +193,13 @@ public class Key_move : MonoBehaviour
     /// </summary>
     public void ResetKeyState()
     {
-        _currentPos = initialPos;
+        // 重置位置
+        _keyNoteData.x = initialPos.x;
+        _keyNoteData.y = initialPos.y;
         _keyTransform.position = new Vector3(initialPos.x, initialPos.y, _keyTransform.position.z);
-        _isMoveFramesLoaded = false;
 
-        // 重新加载Move帧数据（如果启用）
-        if (useMoveFirst)
-        {
-            LoadMoveFrames();
-        }
+        // 重新初始化指令
+        InitCommands();
 
         Debug.Log($"[{gameObject.name}] Key_move：已重置到初始位置{initialPos}", this);
     }

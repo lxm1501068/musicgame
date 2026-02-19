@@ -69,10 +69,6 @@ public class ChartRunner : MonoBehaviour
             GameObject noteObj = Instantiate(notePrefab, noteParent);
             // 1. 获取/创建NoteData组件（确保音符对象挂载NoteData）
             NoteData noteData = noteObj.GetComponent<NoteData>();
-            if (noteData == null)
-            {
-                noteData = noteObj.AddComponent<NoteData>();
-            }
 
             // 2. 初始化NoteData数据（从Command映射到NoteData字段）
             InitNoteData(noteData, cmd);
@@ -103,7 +99,7 @@ public class ChartRunner : MonoBehaviour
     {
         // 映射NoteTools.cs中NoteData的核心字段
         noteData.NoteIndex = cmd.num;          // 音符序号（对应cmd.num）
-        noteData.KeyIndex = cmd.keyIndex;      // 键序号（需确保Command有keyIndex字段）
+        noteData.KeyIndex = cmd.key_name;      // 键序号（需确保Command有keyIndex字段）
         noteData.x = cmd.x1;                   // 初始X坐标（从cmd的x1读取）
         noteData.y = cmd.y1;                   // 初始Y坐标（从cmd的y1读取）
         noteData.isVisible = false;            // 初始隐藏，待时机显示
