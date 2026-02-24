@@ -2,40 +2,19 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-// 按键初始状态数据
+// Key_move指令数据
 [Serializable]
-public class KeyData
-{
-    public int keyName;       // 按键编号
-    public float x;           // 初始x坐标
-    public float y;           // 初始y坐标
-    public int show;          // 是否显示（1显示/0隐藏）
-
-    public KeyData(int keyName, float x, float y, int show)
-    {
-        this.keyName = keyName;
-        this.x = x;
-        this.y = y;
-        this.show = show;
-    }
-}
-
-//Key_move指令数据
-[Serializable]
-public class KeyMoveData
+public class KeyCommand
 {
     public int keyIndex;      // 按键序号（对应InputManager的按键组）
     public float startTime;   // 移动开始时间
     public float endTime;     // 移动结束时间
-    public Vector2 targetPos; // 移动目标坐标
-
-    public KeyMoveData(int keyIndex, float startTime, float endTime, Vector2 targetPos)
-    {
-        this.keyIndex = keyIndex;
-        this.startTime = startTime;
-        this.endTime = endTime;
-        this.targetPos = targetPos;
-    }
+    public float x1;          // 起始x坐标
+    public float y1;          // 起始y坐标
+    public float x2;          // 目标x坐标
+    public float y2;          // 目标y坐标
+    public string filename;   // Move指令的.json文件名
+    public string cmdType;    
 }
 
 // 音符类型枚举
@@ -44,63 +23,110 @@ public enum NoteType
     Tap, Hold, DTap, Flick, Key, Drag
 }
 
-// 音符数据（仅新增 is_show 字段，其余完全保留）
+// 音符指令
 [Serializable]
 public class Command
 {
-    public bool is_show = true; // 新增：控制该音符是否显示（默认显示）
-    public NoteType type;       // 音符类型
-    public int num;             // 音符编号（唯一）
-    public float timeA;         // 起始时间（排序依据）
-    public float timeB;         // 结束时间（destroy指令为0）
-    public float x1;           // x1坐标（支持表达式）
-    public float y1;           // y1坐标（支持表达式）
-    public float x2;           // x2坐标（支持表达式）
-    public float y2;           // y2坐标（支持表达式）
-    public int key_name;        // Drop_to指令指向的key
-    public string filename;     //Move指令的.json文件名
-    public string commandName; // 指令名称
-    public bool isNoteFirstTimeOccured; // 是否第一次创建音符
+    public bool is_show = true; 
+    public NoteType type;       
+    public int num;             
+    public float timeA;         
+    public float timeB;         
+    public float x1;           
+    public float y1;           
+    public float x2;           
+    public float y2;           
+    public int key_name;        
+    public string filename;     
+    public string commandName; 
+    public bool isNoteFirstTimeOccured; 
 }
 
-// 谱面总数据（改造为ScriptableObject单例，保留所有原有方法/字段）
-[CreateAssetMenu(fileName = "ChartDataSingleton", menuName = "节奏游戏/ChartData单例")] // 手动创建实例的菜单
+// 补全KeyData的构造函数 + 序列化（方便Inspector查看）
+[Serializable]
+public class KeyData
+{
+    public int keyName;       // 按键编号
+    public float x;           // 初始x坐标
+    public float y;           // 初始y坐标
+    public int show;          // 是否显示（1显示/0隐藏）
+    public List<KeyCommand> keyCommands; // 关联的Key指令列表
+
+    // 新增：对应LoadChart解析时的构造函数（解决编译报错）
+    public KeyData(int keyName, float x, float y, int show)
+    {
+        this.keyName = keyName;
+        this.x = x;
+        this.y = y;
+        this.show = show;
+        this.keyCommands = new List<KeyCommand>(); // 初始化指令列表
+    }
+
+    // 无参构造（Unity序列化需要）
+    public KeyData()
+    {
+        keyCommands = new List<KeyCommand>();
+    }
+}
+
+// 移除KeyMoveData，替换为KeyCommand（因为你已定义KeyCommand）
+[CreateAssetMenu(fileName = "ChartDataSingleton", menuName = "节奏游戏/ChartData单例")]
 public class ChartData : ScriptableObject
 {
-    // 单例核心：全局唯一实例
     private static ChartData _instance;
-    // 公共访问入口
     public static ChartData Instance
     {
         get
         {
-            // 1. 如果实例已存在，直接返回
             if (_instance != null) return _instance;
-
-            // 2. 尝试从Resources文件夹加载已创建的ChartData实例
             _instance = Resources.Load<ChartData>("ChartDataSingleton");
-
-            // 3. 如果加载不到，自动创建一个运行时实例（仅内存中，不会保存到本地）
             if (_instance == null)
             {
                 _instance = CreateInstance<ChartData>();
-                // 标记为隐藏（避免在Hierarchy显示）
                 _instance.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild | HideFlags.HideInHierarchy;
-                Debug.LogWarning("未找到ChartData单例资源，已自动创建运行时实例（仅内存有效）");
+                Debug.LogWarning("未找到ChartData单例资源，已自动创建运行时实例");
             }
-
             return _instance;
         }
     }
 
     public List<KeyData> keyDatas = new List<KeyData>();  // 按键初始状态
-    public List<Command> commands = new List<Command>();// 所有音符（保持原有List结构）
+    public List<Command> commands = new List<Command>();  // 所有音符指令
     public float totalDuration;                           // 谱面总时长
     public int noteCount;                                // 音符总数量
-    public Dictionary<int, bool> isScorable = new Dictionary<int, bool>(); // 音符是否可记分
-    public List<KeyMoveData> keyMoveDatas = new List<KeyMoveData>(); // Key_move指令数据列表
+    public int keyCount;                                 // 按键总数量
+    public Dictionary<int, bool> isScorable = new Dictionary<int, bool>(); 
+    // 新增：存储轨道按键ID列表（对应chart.txt第二行的内容）
+    public List<int> keyIds = new List<int>(); 
 
-    // ========== 以下是原有方法，完全保留 ==========
+    // ========== 恢复的 ClearChartContent 方法 ==========
+    /// <summary>
+    /// 清空谱面所有内容（兼容原有LoadChart逻辑的命名）
+    /// </summary>
+    public void ClearChartContent()
+    {
+        keyDatas.Clear();
+        commands.Clear();
+        totalDuration = 0;
+        noteCount = 0;
+        keyCount = 0;
+        isScorable.Clear();
+        keyIds.Clear();
+        // 清空所有KeyData内的指令列表
+        foreach(var keyData in keyDatas)
+        {
+            if(keyData?.keyCommands != null) 
+                keyData.keyCommands.Clear();
+        }
+    }
+
+    // 原有方法保留，仅修改ResetChartData：清空KeyData的指令列表
+    public void ResetChartData()
+    {
+        // 复用ClearChartContent逻辑，避免代码冗余
+        ClearChartContent();
+    }
+
     public void AddNoteData(Command newCommand)
     {
         commands.Add(newCommand);
@@ -133,16 +159,5 @@ public class ChartData : ScriptableObject
             // timeA相同则比较num（唯一编号，保证排序稳定）
             return cmd1.num.CompareTo(cmd2.num);
         });
-    }
-
-    // ========== 可选：重置单例数据（切换谱面时用） ==========
-    public void ResetChartData()
-    {
-        keyDatas.Clear();
-        commands.Clear();
-        totalDuration = 0;
-        noteCount = 0;
-        isScorable.Clear();
-        keyMoveDatas.Clear();
     }
 }

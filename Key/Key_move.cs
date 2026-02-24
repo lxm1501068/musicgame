@@ -1,229 +1,466 @@
 using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 
-/// <summary>
-/// Key移动控制组件：处理Key的shift（匀速移动）和move（JSON帧移动）指令
-/// 复用NoteTools的核心移动逻辑，减少冗余
-/// </summary>
+[RequireComponent(typeof(SpriteRenderer))] // 确保Key有视觉渲染组件
 public class Key_move : MonoBehaviour
 {
-    #region 序列化配置（Inspector面板可编辑）
     [Header("核心关联")]
-    [Tooltip("关联NoteTools实例（获取时间阈值/输入管理）")]
-    public NoteTools noteTools;
-    [Tooltip("当前Key的序号（对应InputManager的按键组）")]
-    public int keyIndex = 1;
+    public NoteData noteData;               // 绑定Key的核心数据
+    public int keyIndex = 1;                // 按键序号（对应InputManager的按键组）
 
-    [Header("Shift指令配置")]
-    [Tooltip("Shift移动起始时间（秒，基于音乐时间）")]
-    public float shiftStartTime = 0f;
-    [Tooltip("Shift移动结束时间（秒，基于音乐时间）")]
-    public float shiftEndTime = 2f;
-    [Tooltip("Shift移动的目标坐标")]
-    public Vector2 shiftTargetPos;
+    [Header("备用配置（ChartData无数据时生效）")]
+    public Vector2 initialPos = Vector2.zero; // 初始坐标
+    public float shiftStartTime = 0f;         // Shift起始时间
+    public float shiftEndTime = 2f;           // Shift结束时间
+    public Vector2 shiftTargetPos = Vector2.zero; // Shift目标坐标
+    public string moveJsonPath = "key_move_frames.json"; // Move指令JSON路径
+    public bool useMoveFirst = true;         // 是否优先使用Move指令
 
-    [Header("Move指令配置")]
-    [Tooltip("Move指令的JSON帧数据路径（StreamingAssets目录下）")]
-    public string moveJsonPath = "key_move_frames.json";
-    [Tooltip("是否优先使用Move指令（true=Move，false=Shift）")]
-    public bool useMoveFirst = true;
+    [Header("视觉配置")]
+    public Sprite defaultKeySprite;          // 默认Key精灵
+    public bool isVisible = true;            // 是否显示
 
-    [Header("初始配置")]
-    [Tooltip("Key的初始坐标")]
-    public Vector2 initialPos;
-    #endregion
-
-    #region 私有状态
-    private Transform _keyTransform; // 缓存Key的Transform（控制位置）
-    private NoteData _keyNoteData;   // 复用NoteData存储Key的位置/状态
-    private ShiftCommand _shiftCmd;  // 复用ShiftCommand处理匀速移动
-    private MoveCommand _moveCmd;    // 复用MoveCommand处理JSON帧移动
+    #region 私有字段
+    private SpriteRenderer spriteRenderer;
+    private KeyData _chartKeyData;           // 从ChartData读取的Key初始数据
+    private List<KeyCommand> _keyCommands;   // 该Key的所有指令列表
+    private List<ShiftCommand> _shiftCommands = new List<ShiftCommand>(); // Shift指令缓存
+    private List<MoveCommand> _moveCommands = new List<MoveCommand>();   // Move指令缓存
+    private bool _isInitialized = false;     // 初始化完成标记
     #endregion
 
     #region 生命周期
-    private void Awake()
+    void Awake()
     {
-        // 初始化缓存
-        _keyTransform = transform;
-        
-        // 安全校验
-        ValidateReferences();
+        // 初始化组件引用
+        spriteRenderer = GetComponent<SpriteRenderer>();
+        ValidateComponentReferences();
 
-        // 初始化Key的NoteData（模拟音符数据，仅用于存储位置）
-        _keyNoteData = new NoteData
-        {
-            NoteIndex = keyIndex,
-            KeyIndex = keyIndex,
-            x = initialPos.x,
-            y = initialPos.y,
-            isVisible = true
-        };
-        _keyTransform.position = new Vector3(_keyNoteData.x, _keyNoteData.y, _keyTransform.position.z);
+        // 初始化视觉状态
+        InitVisualState();
 
-        // 初始化指令（复用NoteTools的指令类）
-        InitCommands();
+        // 【核心修改】移除依赖ChartData的初始化逻辑，移到InitAfterChartLoaded
+        // LoadKeyDataFromChart();
+        // ValidateKeyIndex(); 
+        // InitNoteData();
+        // InitAllCommands();
+
+        _isInitialized = true;
     }
 
-    private void Update()
+    void Update()
     {
-        if (noteTools == null) return;
+        // ========== 核心新增：游戏未播放时直接返回 ==========
+        if (GameManager.Instance == null || !GameManager.Instance.IsPlaying)
+        {
+            // 可选：未播放时重置Key到初始状态
+            ResetKeyToInitialState();
+            return;
+        }
+        // 防护：未初始化/keyIndex不在合法列表中时跳过
+        if (!_isInitialized || !IsKeyIndexValid())
+        {
+            return;
+        }
 
-        // 替换为实际音乐播放时间（建议替换为AudioSource.time）
-        float currentMusicTime = Time.time;
+        float currentTime = GameManager.Instance.CurrentPlayTime;
         float deltaTime = Time.deltaTime;
 
-        // 更新Key位置（优先Move指令，其次Shift）
-        UpdateKeyPosition(currentMusicTime, deltaTime);
+        // 执行所有指令逻辑
+        ExecuteShiftCommands(currentTime, deltaTime);
+        ExecuteMoveCommands(currentTime);
+        ExecuteShowHideCommands(currentTime);
+
+        // 同步NoteData坐标到Transform
+        SyncPosition();
+    }
+
+    void OnDestroy()
+    {
+        StopAllCoroutines();
+        _shiftCommands.Clear();
+        _moveCommands.Clear();
+        _keyCommands?.Clear();
     }
     #endregion
 
-    #region 核心指令逻辑
+    #region 新增：谱面解析后初始化方法
     /// <summary>
-    /// 校验核心引用，缺失则提示并禁用脚本
+    /// 谱面解析完成后执行的初始化（依赖ChartData）
+    /// 供GameManager调用，支持重复初始化（切换谱面）
     /// </summary>
-    private void ValidateReferences()
+    public void InitAfterChartLoaded()
     {
-        if (_keyTransform == null)
+        if (!_isInitialized)
         {
-            Debug.LogError($"[{gameObject.name}] Key_move组件：未找到Transform组件！", this);
+            Debug.LogError($"[{gameObject.name}] Key_move基础初始化未完成，无法执行Chart相关初始化！");
+            return;
+        }
+
+        // 清空旧指令缓存
+        _shiftCommands.Clear();
+        _moveCommands.Clear();
+        _keyCommands?.Clear();
+
+        // 执行依赖ChartData的初始化逻辑
+        LoadKeyDataFromChart();
+        ValidateKeyIndex();
+        InitNoteData();
+        InitAllCommands();
+
+        Debug.Log($"[{gameObject.name}] Key{keyIndex} 谱面解析后初始化完成");
+    }
+    #endregion
+
+    #region 新增：未播放时重置Key状态
+    /// <summary>
+    /// 游戏未播放时，将Key重置到初始状态
+    /// </summary>
+    private void ResetKeyToInitialState()
+    {
+        if (noteData == null) return;
+
+        // 重置坐标到初始值
+        float initX = _chartKeyData != null ? _chartKeyData.x : initialPos.x;
+        float initY = _chartKeyData != null ? _chartKeyData.y : initialPos.y;
+        noteData.x = initX;
+        noteData.y = initY;
+        SyncPosition();
+
+        // 重置显示状态
+        bool initVisible = _chartKeyData != null ? (_chartKeyData.show == 1) : isVisible;
+        noteData.isVisible = initVisible;
+        gameObject.SetActive(initVisible);
+    }
+    #endregion
+
+    #region 初始化逻辑
+    /// <summary>
+    /// 校验组件引用有效性
+    /// </summary>
+    private void ValidateComponentReferences()
+    {
+        if (spriteRenderer == null)
+        {
+            Debug.LogError($"[{gameObject.name}] Key_move组件：未找到SpriteRenderer组件！");
             enabled = false;
+            return;
         }
 
-        if (noteTools == null)
+        if (noteData == null)
         {
-            Debug.LogError($"[{gameObject.name}] Key_move组件：未关联NoteTools实例！", this);
-        }
-
-        // Shift指令时间校验
-        if (shiftEndTime <= shiftStartTime)
-        {
-            Debug.LogWarning($"[{gameObject.name}] Key_move组件：Shift结束时间({shiftEndTime})需大于起始时间({shiftStartTime})，已自动修正为起始时间+1秒", this);
-            shiftEndTime = shiftStartTime + 1f;
+            Debug.LogWarning($"[{gameObject.name}] Key_move组件：NoteData未赋值，自动创建新实例！");
+            noteData = new NoteData();
         }
     }
 
     /// <summary>
-    /// 初始化Shift/Move指令（复用NoteTools的指令类）
+    /// 初始化视觉状态
     /// </summary>
-    private void InitCommands()
+    private void InitVisualState()
     {
-        // 1. 初始化Shift指令（构造模拟的Command数据）
+        if (defaultKeySprite != null)
+        {
+            spriteRenderer.sprite = defaultKeySprite;
+        }
+        else
+        {
+            Debug.LogWarning($"[{gameObject.name}] Key_move组件：未设置默认Key精灵！");
+        }
+
+        gameObject.SetActive(isVisible);
+    }
+
+    /// <summary>
+    /// 从ChartData加载Key初始数据和指令
+    /// </summary>
+    private void LoadKeyDataFromChart()
+    {
+        if (ChartData.Instance == null)
+        {
+            Debug.LogWarning("LoadKeyDataFromChart: ChartData.Instance为空，使用备用配置");
+            _keyCommands = new List<KeyCommand>();
+            return;
+        }
+
+        // 先检查keyIndex是否在合法列表中
+        if (!IsKeyIndexValid())
+        {
+            Debug.LogWarning($"LoadKeyDataFromChart: Key{keyIndex} 不在合法keyIds列表中，使用备用配置");
+            _keyCommands = new List<KeyCommand>();
+            return;
+        }
+
+        // 查找当前keyIndex对应的KeyData
+        _chartKeyData = ChartData.Instance.keyDatas.FirstOrDefault(k => k.keyName == keyIndex);
+        if (_chartKeyData == null)
+        {
+            Debug.LogWarning($"LoadKeyDataFromChart: ChartData中无Key{keyIndex}的初始数据，使用备用配置");
+            _keyCommands = new List<KeyCommand>();
+            return;
+        }
+
+        // 读取并排序指令（按开始时间）
+        _keyCommands = _chartKeyData.keyCommands?
+            .OrderBy(cmd => cmd.startTime)
+            .ToList() ?? new List<KeyCommand>();
+
+        Debug.Log($"LoadKeyDataFromChart: 加载Key{keyIndex}的初始状态（x:{_chartKeyData.x}, y:{_chartKeyData.y}, show:{_chartKeyData.show}），指令数：{_keyCommands.Count}");
+    }
+
+    /// <summary>
+    /// 初始化NoteData（优先ChartData配置）
+    /// </summary>
+    private void InitNoteData()
+    {
+        // 优先使用ChartData的初始值，否则用备用配置
+        float initX = _chartKeyData != null ? _chartKeyData.x : initialPos.x;
+        float initY = _chartKeyData != null ? _chartKeyData.y : initialPos.y;
+        bool initVisible = _chartKeyData != null ? (_chartKeyData.show == 1) : isVisible;
+
+        // 赋值核心字段
+        noteData.NoteIndex = keyIndex;
+        noteData.KeyIndex = keyIndex;
+        noteData.x = initX;
+        noteData.y = initY;
+        noteData.isVisible = initVisible;
+        noteData.commands ??= new List<Command>(); // 初始化指令列表
+
+        // 同步初始位置和显示状态
+        transform.position = new Vector3(initX, initY, transform.position.z);
+        gameObject.SetActive(initVisible);
+    }
+
+    /// <summary>
+    /// 初始化所有指令（Shift/Move/Show/Hide）
+    /// </summary>
+    private void InitAllCommands()
+    {
+        // 优先使用ChartData中的KeyCommand（仅当keyIndex合法时）
+        if (IsKeyIndexValid() && _keyCommands != null && _keyCommands.Count > 0)
+        {
+            foreach (var keyCmd in _keyCommands)
+            {
+                switch (keyCmd.cmdType?.ToLower())
+                {
+                    case "drift": // Drift对应Shift指令
+                        CreateShiftCommandFromKeyCmd(keyCmd);
+                        break;
+                    case "move": // Move指令（JSON帧动画）
+                        CreateMoveCommandFromKeyCmd(keyCmd);
+                        break;
+                    case "hide": // 隐藏指令（无需提前初始化，Update中实时判断）
+                    case "show": // 显示指令（无需提前初始化，Update中实时判断）
+                        break;
+                    default:
+                        Debug.LogWarning($"InitAllCommands: 未知指令类型 {keyCmd.cmdType}，跳过Key{keyIndex}的该指令");
+                        break;
+                }
+            }
+        }
+        else
+        {
+            // 备用配置：创建手动设置的指令
+            CreateBackupShiftCommand();
+            CreateBackupMoveCommand();
+        }
+    }
+
+    /// <summary>
+    /// 从KeyCommand创建Shift指令
+    /// </summary>
+    private void CreateShiftCommandFromKeyCmd(KeyCommand keyCmd)
+    {
+        Command shiftCmdData = new Command
+        {
+            timeA = keyCmd.startTime,
+            timeB = keyCmd.endTime,
+            x1 = keyCmd.x1,
+            y1 = keyCmd.y1,
+            x2 = keyCmd.x2,
+            y2 = keyCmd.y2
+        };
+
+        ShiftCommand shiftCmd = new ShiftCommand(noteData, shiftCmdData);
+        _shiftCommands.Add(shiftCmd);
+        Debug.Log($"InitAllCommands: Key{keyIndex} 创建Drift(Shift)指令（{keyCmd.startTime}~{keyCmd.endTime}）");
+    }
+
+    /// <summary>
+    /// 从KeyCommand创建Move指令
+    /// </summary>
+    private void CreateMoveCommandFromKeyCmd(KeyCommand keyCmd)
+    {
+        if (string.IsNullOrEmpty(keyCmd.filename))
+        {
+            Debug.LogWarning($"InitAllCommands: Key{keyIndex} 的Move指令JSON路径为空，跳过");
+            return;
+        }
+
+        MoveCommand moveCmd = new MoveCommand(noteData, keyCmd.filename);
+        _moveCommands.Add(moveCmd);
+        useMoveFirst = true;
+        Debug.Log($"InitAllCommands: Key{keyIndex} 创建Move指令（JSON：{keyCmd.filename}）");
+    }
+
+    /// <summary>
+    /// 创建备用Shift指令（ChartData无数据时）
+    /// </summary>
+    private void CreateBackupShiftCommand()
+    {
         Command shiftCmdData = new Command
         {
             timeA = shiftStartTime,
             timeB = shiftEndTime,
-            x1 = initialPos.x,
-            y1 = initialPos.y,
+            x1 = noteData.x,
+            y1 = noteData.y,
             x2 = shiftTargetPos.x,
             y2 = shiftTargetPos.y
         };
-        _shiftCmd = new ShiftCommand(_keyNoteData, shiftCmdData);
 
-        // 2. 初始化Move指令（复用NoteTools的MoveCommand）
-        _moveCmd = new MoveCommand(_keyNoteData, moveJsonPath);
+        ShiftCommand shiftCmd = new ShiftCommand(noteData, shiftCmdData);
+        _shiftCommands.Add(shiftCmd);
+        Debug.Log($"InitAllCommands: Key{keyIndex} 创建备用Shift指令");
     }
 
     /// <summary>
-    /// 更新Key位置（优先Move，其次Shift）
+    /// 创建备用Move指令（ChartData无数据时）
     /// </summary>
-    /// <param name="currentTime">当前音乐时间（秒）</param>
-    /// <param name="deltaTime">帧间隔时间</param>
-    private void UpdateKeyPosition(float currentTime, float deltaTime)
+    private void CreateBackupMoveCommand()
     {
-        // 优先执行Move指令
-        if (useMoveFirst && _moveCmd != null)
+        if (string.IsNullOrEmpty(moveJsonPath))
         {
-            _moveCmd.UpdatePosition(currentTime);
-        }
-        // 其次执行Shift指令
-        else if (_shiftCmd != null)
-        {
-            _shiftCmd.UpdatePosition(currentTime, deltaTime);
+            Debug.LogWarning($"InitAllCommands: Key{keyIndex} 备用Move指令JSON路径为空，跳过");
+            return;
         }
 
-        // 将NoteData的位置同步到Transform
-        _keyTransform.position = new Vector3(
-            _keyNoteData.x, 
-            _keyNoteData.y, 
-            _keyTransform.position.z
-        );
+        MoveCommand moveCmd = new MoveCommand(noteData, moveJsonPath);
+        _moveCommands.Add(moveCmd);
+        Debug.Log($"InitAllCommands: Key{keyIndex} 创建备用Move指令（JSON：{moveJsonPath}）");
     }
     #endregion
 
-    #region 公共方法（外部调用/重置）
+    #region 指令执行逻辑
     /// <summary>
-    /// 手动设置Shift指令参数（外部代码调用）
+    /// 执行所有Shift指令
     /// </summary>
-    /// <param name="startTime">起始时间</param>
-    /// <param name="endTime">结束时间</param>
-    /// <param name="targetPos">目标坐标</param>
-    public void SetShiftParams(float startTime, float endTime, Vector2 targetPos)
+    private void ExecuteShiftCommands(float currentTime, float deltaTime)
     {
-        shiftStartTime = startTime;
-        shiftEndTime = endTime > startTime ? endTime : startTime + 1f;
-        shiftTargetPos = targetPos;
+        // 优先Move时跳过Shift
+        if (useMoveFirst && _moveCommands.Count > 0) return;
 
-        // 重新初始化Shift指令
-        Command shiftCmdData = new Command
+        foreach (var shiftCmd in _shiftCommands)
         {
-            timeA = shiftStartTime,
-            timeB = shiftEndTime,
-            x1 = _keyNoteData.x,
-            y1 = _keyNoteData.y,
-            x2 = shiftTargetPos.x,
-            y2 = shiftTargetPos.y
-        };
-        _shiftCmd = new ShiftCommand(_keyNoteData, shiftCmdData);
-
-        Debug.Log($"[{gameObject.name}] Key_move：更新Shift参数 → 起始{startTime}s，结束{shiftEndTime}s，目标{targetPos}", this);
+            shiftCmd?.UpdatePosition(currentTime, deltaTime);
+        }
     }
 
     /// <summary>
-    /// 手动切换Move指令的JSON路径并重新加载
+    /// 执行所有Move指令
     /// </summary>
-    /// <param name="newJsonPath">新的JSON路径（StreamingAssets下）</param>
-    public void ReloadMoveFrames(string newJsonPath)
+    private void ExecuteMoveCommands(float currentTime)
     {
-        moveJsonPath = newJsonPath;
-        _moveCmd = new MoveCommand(_keyNoteData, moveJsonPath);
+        if (!useMoveFirst && _shiftCommands.Count > 0) return;
+
+        foreach (var moveCmd in _moveCommands)
+        {
+            moveCmd?.UpdatePosition(currentTime);
+        }
     }
 
     /// <summary>
-    /// 重置Key位置和状态（用于重玩/刷新）
+    /// 执行显示/隐藏指令
+    /// </summary>
+    private void ExecuteShowHideCommands(float currentTime)
+    {
+        if (!IsKeyIndexValid() || _keyCommands == null || _keyCommands.Count == 0) return;
+
+        foreach (var keyCmd in _keyCommands)
+        {
+            if (currentTime < keyCmd.startTime || currentTime > keyCmd.endTime) continue;
+
+            switch (keyCmd.cmdType?.ToLower())
+            {
+                case "hide":
+                    noteData.isVisible = false;
+                    gameObject.SetActive(false);
+                    break;
+                case "show":
+                    noteData.isVisible = true;
+                    gameObject.SetActive(true);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 同步NoteData坐标到Transform
+    /// </summary>
+    private void SyncPosition()
+    {
+        if (noteData == null) return;
+        transform.position = new Vector3(noteData.x, noteData.y, transform.position.z);
+    }
+    #endregion
+
+    #region 扩展方法（可选）
+    /// <summary>
+    /// 手动重置Key位置和指令状态
     /// </summary>
     public void ResetKeyState()
     {
-        // 重置位置
-        _keyNoteData.x = initialPos.x;
-        _keyNoteData.y = initialPos.y;
-        _keyTransform.position = new Vector3(initialPos.x, initialPos.y, _keyTransform.position.z);
+        if (!IsKeyIndexValid() || noteData == null) return;
 
-        // 重新初始化指令
-        InitCommands();
+        // 重置坐标
+        noteData.x = _chartKeyData != null ? _chartKeyData.x : initialPos.x;
+        noteData.y = _chartKeyData != null ? _chartKeyData.y : initialPos.y;
+        SyncPosition();
 
-        Debug.Log($"[{gameObject.name}] Key_move：已重置到初始位置{initialPos}", this);
+        // 重置显示状态
+        noteData.isVisible = _chartKeyData != null ? (_chartKeyData.show == 1) : isVisible;
+        gameObject.SetActive(noteData.isVisible);
+
+        // 清空并重新初始化指令
+        _shiftCommands.Clear();
+        _moveCommands.Clear();
+        InitAllCommands();
+
+        Debug.Log($"ResetKeyState: Key{keyIndex} 已重置到初始状态");
+    }
+    #endregion
+
+    #region 校验方法
+    /// <summary>
+    /// 校验keyIndex是否在合法的keyIds列表中
+    /// </summary>
+    private void ValidateKeyIndex()
+    {
+        if (!IsKeyIndexValid())
+        {
+            Debug.LogError($"[{gameObject.name}] Key_move组件：keyIndex={keyIndex} 不在合法的keyIds列表中！已禁用组件");
+            enabled = false;
+        }
+        else
+        {
+            Debug.Log($"[{gameObject.name}] Key_move组件：keyIndex={keyIndex} 校验通过（在合法keyIds列表中）");
+        }
     }
 
     /// <summary>
-    /// 快捷创建Key物体并挂载Key_move组件
+    /// 检查keyIndex是否在ChartData的keyIds列表中
     /// </summary>
-    /// <param name="parent">父物体</param>
-    /// <param name="keyIndex">Key序号</param>
-    /// <param name="initialPos">初始位置</param>
-    /// <param name="noteTools">NoteTools实例</param>
-    /// <returns>Key_move组件</returns>
-    public static Key_move CreateKey(Transform parent, int keyIndex, Vector2 initialPos, NoteTools noteTools)
+    /// <returns>是否合法</returns>
+    private bool IsKeyIndexValid()
     {
-        GameObject keyObj = new GameObject($"Key_{keyIndex}");
-        keyObj.transform.SetParent(parent);
-        keyObj.transform.position = new Vector3(initialPos.x, initialPos.y, 0f);
+        if (ChartData.Instance == null || ChartData.Instance.keyIds == null || ChartData.Instance.keyIds.Count == 0)
+        {
+            Debug.LogWarning($"[{gameObject.name}] Key_move组件：ChartData或keyIds未加载，暂时跳过keyIndex校验");
+            return true; // 未加载时暂时放行，避免影响初始化
+        }
 
-        Key_move keyMove = keyObj.AddComponent<Key_move>();
-        keyMove.keyIndex = keyIndex;
-        keyMove.initialPos = initialPos;
-        keyMove.noteTools = noteTools;
-
-        return keyMove;
+        return ChartData.Instance.keyIds.Contains(keyIndex);
     }
     #endregion
 }

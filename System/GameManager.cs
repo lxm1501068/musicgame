@@ -1,12 +1,15 @@
 using UnityEngine;
+using System.Collections;
 
 public class GameManager : MonoBehaviour
 {
     // 单例实例（全局唯一）
     public static GameManager Instance;
 
-    [Header("谱面运行器引用（Unity编辑器赋值）")]
-    public ChartRunner chartRunner; // 关联ChartRunner组件
+    [Header("核心模块引用（Unity编辑器赋值）")]
+    public ChartRunner chartRunner; // 音符创建/管理
+    public LoadChart chartLoader;   // 谱面加载/解析
+    public string initialChartFileName = "chart.txt"; // 初始加载的谱面文件名
 
     // 播放状态与时间相关字段
     public bool IsPlaying { get; private set; } // 播放状态（只读，外部仅能通过方法修改）
@@ -44,24 +47,119 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        // 校验ChartRunner引用（避免空引用）
+        // 自动初始化LoadChart组件（若未赋值）
+        InitLoadChart();
+        
+        // 校验核心引用
+        ValidateCoreReferences();
+    }
+
+    #region 初始化与校验
+    /// <summary>
+    /// 初始化LoadChart组件（防止空引用）
+    /// </summary>
+    private void InitLoadChart()
+    {
+        if (chartLoader == null)
+        {
+            chartLoader = gameObject.AddComponent<LoadChart>();
+            Debug.LogWarning("GameManager: 未赋值LoadChart，已自动挂载到自身");
+        }
+    }
+
+    /// <summary>
+    /// 校验核心模块引用（提前暴露错误）
+    /// </summary>
+    private void ValidateCoreReferences()
+    {
         if (chartRunner == null)
         {
             Debug.LogError("GameManager: 未赋值ChartRunner引用！请在Unity编辑器中绑定。");
         }
+        if (chartLoader == null)
+        {
+            Debug.LogError("GameManager: LoadChart初始化失败！请检查loadChartPrefab或手动挂载LoadChart组件。");
+        }
+    }
+    #endregion
 
-        // 修复：初始化暂停相关变量，避免首次暂停时值为0导致计算错误
-        lastPauseTime = Time.time;
-        pausedPlayTime = 0;
+    #region 谱面加载&解析（核心新增逻辑）
+    /// <summary>
+    /// 加载并解析谱面（封装LoadChart的流程）
+    /// </summary>
+    /// <param name="fileName">谱面文件名（如chart.txt）</param>
+    public void LoadAndParseChart(string fileName)
+    {
+        // 前置校验
+        if (chartLoader == null)
+        {
+            Debug.LogError("GameManager.LoadAndParseChart: LoadChart引用为空！");
+            return;
+        }
+        
+        // 清空旧谱面数据
+        ClearChartData();
+        
+        // 加载并解析谱面（协程）
+        StartCoroutine(chartLoader.LoadChartFile(fileName));
+        // 加载完成后解析（注：若需等待加载完成，需调整为回调/异步）
+        Invoke(nameof(ParseLoadedChart), 0.1f); // 简易等待：实际项目建议用回调/AsyncAwait
     }
 
-    #region 谱面播放控制核心方法
     /// <summary>
-    /// 开始播放谱面（需先调用PreCreateAllNotes预创建音符）
+    /// 解析已加载的谱面内容
+    /// </summary>
+    private void ParseLoadedChart()
+    {
+        if (string.IsNullOrEmpty(chartLoader.ChartContent))
+        {
+            Debug.LogError("GameManager.ParseLoadedChart: 谱面内容为空，解析失败！");
+            return;
+        }
+        
+        // 解析谱面数据到ChartData
+        ChartData parsedData = chartLoader.ParseChart();
+        if (parsedData == null)
+        {
+            Debug.LogError("GameManager.ParseLoadedChart: 谱面解析失败！");
+            return;
+        }
+        
+        // 预创建所有音符
+        PreCreateAllNotes();
+        
+        Debug.Log("GameManager: 谱面加载→解析→音符创建 全流程完成！");
+    }
+
+    /// <summary>
+    /// 清空谱面数据（切换谱面时调用）
+    /// </summary>
+    public void ClearChartData()
+    {
+        // 清空ChartData的核心数据
+        ChartData.Instance.ResetChartData();
+        
+        // 清空LoadChart的缓存
+        ChartData.Instance.ClearChartContent();
+        
+        // 重置音符创建状态
+        if (chartRunner != null)
+        {
+            // 若ChartRunner有清空音符的方法，此处调用（需补充ChartRunner的ClearNotes）
+            // chartRunner.ClearAllNotes();
+        }
+        
+        Debug.Log("GameManager: 旧谱面数据已清空");
+    }
+    #endregion
+
+    #region 谱面播放控制核心方法（保留并优化）
+    /// <summary>
+    /// 开始播放谱面（需先完成加载→解析→创建音符）
     /// </summary>
     public void PlayChart()
     {
-        // 前置校验
+        // 前置校验：补充谱面数据和音符创建的校验
         if (chartRunner == null)
         {
             Debug.LogError("GameManager.PlayChart: ChartRunner引用为空！");
@@ -69,10 +167,15 @@ public class GameManager : MonoBehaviour
         }
         if (!chartRunner.IsNotesPreCreated)
         {
-            Debug.LogError("GameManager.PlayChart: 未预创建音符，请先调用PreCreateAllNotes！");
+            Debug.LogError("GameManager.PlayChart: 未预创建音符，请先调用LoadAndParseChart！");
             return;
         }
-        // 修复：防止重复调用PlayChart导致时间轴错乱
+        if (ChartData.Instance.commands.Count == 0)
+        {
+            Debug.LogError("GameManager.PlayChart: 谱面无指令数据，请先解析谱面！");
+            return;
+        }
+        // 防止重复调用
         if (IsPlaying)
         {
             Debug.LogWarning("GameManager.PlayChart: 谱面已在播放中，无需重复调用！");
@@ -92,14 +195,10 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public void TogglePlay()
     {
-        if (chartRunner == null)
+        // 前置校验
+        if (chartRunner == null || !chartRunner.IsNotesPreCreated)
         {
-            Debug.LogError("GameManager.TogglePlay: ChartRunner引用为空！");
-            return;
-        }
-        if (!chartRunner.IsNotesPreCreated)
-        {
-            Debug.LogError("GameManager.TogglePlay: 未预创建音符，无法暂停/恢复！");
+            Debug.LogError("GameManager.TogglePlay: 未加载谱面或未创建音符，无法暂停/恢复！");
             return;
         }
 
@@ -121,23 +220,17 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>
-    /// 停止播放（仅重置状态，不清理音符）
+    /// 停止播放（重置状态+可选清理音符）
     /// </summary>
     public void StopChart()
     {
-        if (chartRunner == null)
-        {
-            Debug.LogError("GameManager.StopChart: ChartRunner引用为空！");
-            return;
-        }
-
-        // 仅重置全局播放状态（不清理音符）
+        // 仅重置全局播放状态
         IsPlaying = false;
         pauseAccumulator = 0;
         lastPauseTime = Time.time;
         pausedPlayTime = 0;
 
-        Debug.Log("GameManager: 谱面已停止，播放状态已重置（未清理音符）");
+        Debug.Log("GameManager: 谱面已停止，播放状态已重置");
     }
 
     /// <summary>

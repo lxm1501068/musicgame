@@ -25,7 +25,7 @@ public class MoveFrameList
 
 // ===== 核心：仅保留4个字段的NoteData =====
 [Serializable]
-public class NoteData
+public class NoteData : MonoBehaviour
 {
     public int NoteIndex;          // 音符序号
     public int KeyIndex;           //键序号

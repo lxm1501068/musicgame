@@ -10,7 +10,6 @@ public class ChartRunner : MonoBehaviour
     public GameObject holdPrefab;      // Hold音符预制体
     public GameObject flickPrefab;     // Flick音符预制体
     public GameObject dragPrefab;      // Drag音符预制体
-    public GameObject keyPrefab;       // Key按键预制体
 
     [Header("层级管理")]
     public Transform noteParent;       // 所有音符的父物体（整理层级）
@@ -46,8 +45,8 @@ public class ChartRunner : MonoBehaviour
         foreach (Command cmd in ChartData.Instance.commands)
         {
             if (cmd == null || !cmd.isNoteFirstTimeOccured) continue; // 仅处理首次出现的音符
-
-            // 选择预制体
+            // 选择预制体（已移除Key类型）
+            Debug.Log($"command: ID:{cmd.num} Type:{cmd.type} TimeA:{cmd.timeA} KeyName:{cmd.key_name}");
             GameObject notePrefab = cmd.type switch
             {
                 NoteType.Tap => tapPrefab,
@@ -55,7 +54,6 @@ public class ChartRunner : MonoBehaviour
                 NoteType.Hold => holdPrefab,
                 NoteType.Flick => flickPrefab,
                 NoteType.Drag => dragPrefab,
-                NoteType.Key => keyPrefab,
                 _ => null
             };
 
