@@ -23,18 +23,6 @@ public class MoveFrameList
     public List<MoveFrame> frames;
 }
 
-// ===== 核心：仅保留4个字段的NoteData =====
-[Serializable]
-public class NoteData : MonoBehaviour
-{
-    public int NoteIndex;          // 音符序号
-    public int KeyIndex;           //键序号
-    public float x;               // X坐标
-    public float y;               // Y坐标
-    public bool isVisible = true; // 是否显示
-    public List<Command> commands;// 指令
-}
-
 #region 1. Shift指令类（速度+方向+终止时间+移动逻辑）
 public class ShiftCommand
 {

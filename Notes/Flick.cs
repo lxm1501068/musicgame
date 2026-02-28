@@ -57,25 +57,6 @@ public class Flick : MonoBehaviour
             Debug.LogWarning($"[{gameObject.name}] Flick组件：未设置默认Flick精灵！");
         }
 
-        if (noteData == null)
-        {
-            // 自动创建NoteData（兼容未赋值场景）
-            noteData = new NoteData()
-            {
-                NoteIndex = 11,
-                x = transform.position.x,
-                y = transform.position.y,
-                isVisible = true,
-                commands = new List<Command>()
-            };
-            Debug.LogWarning($"[{gameObject.name}] Flick组件：NoteData未赋值，自动创建默认实例！");
-        }
-        else
-        {
-            // 初始化位置（从NoteData读取）
-            transform.position = new Vector2(noteData.x, noteData.y);
-        }
-
         // 校验有效按键组
         if (validOtherKeyIndices.Count == 0)
         {
