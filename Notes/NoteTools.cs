@@ -49,7 +49,7 @@ public class ShiftCommand
     }
 
     // 每帧更新位置（仅操作note.x/note.y）
-    public void UpdatePosition(float currentTime, float deltaTime)
+    public void UpdateNotePosition(float currentTime, float deltaTime)
     {
         if (note == null || currentTime > endTime) return;
 
@@ -155,7 +155,7 @@ public class MoveCommand
     }
 
     // 每帧更新位置（仅操作note.x/note.y）
-    public void UpdatePosition(float currentTime)
+    public void UpdateNotePosition(float currentTime)
     {
         if (note == null || _frames == null || _frames.Count == 0) return;
 

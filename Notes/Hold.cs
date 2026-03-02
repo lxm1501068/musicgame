@@ -119,11 +119,11 @@ public class Hold : MonoBehaviour
         // 优先级：Move指令 > Shift指令
         if (moveCommand != null)
         {
-            moveCommand.UpdatePosition(currentTime);
+            moveCommand.UpdateNotePosition(currentTime);
         }
         else if (shiftCommand != null)
         {
-            shiftCommand.UpdatePosition(currentTime, deltaTime);
+            shiftCommand.UpdateNotePosition(currentTime, deltaTime);
         }
 
         // 同步位置到Transform

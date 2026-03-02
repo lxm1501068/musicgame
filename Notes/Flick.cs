@@ -136,7 +136,7 @@ public class Flick : MonoBehaviour
     {
         foreach (var shiftCmd in shiftCommands)
         {
-            shiftCmd.UpdatePosition(currentTime, Time.deltaTime);
+            shiftCmd.UpdateNotePosition(currentTime, Time.deltaTime);
         }
     }
 
@@ -145,7 +145,7 @@ public class Flick : MonoBehaviour
     {
         foreach (var moveCmd in moveCommands)
         {
-            moveCmd.UpdatePosition(currentTime);
+            moveCmd.UpdateNotePosition(currentTime);
         }
     }
 

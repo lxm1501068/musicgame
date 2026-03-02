@@ -7,7 +7,6 @@ using System.Linq;
 public class Key_move : MonoBehaviour
 {
     [Header("核心关联")]
-    public NoteData noteData;               // 绑定Key的核心数据
     public int keyIndex = 1;                // 按键序号（对应InputManager的按键组）
 
     [Header("备用配置（ChartData无数据时生效）")]
@@ -22,13 +21,19 @@ public class Key_move : MonoBehaviour
     public Sprite defaultKeySprite;          // 默认Key精灵
     public bool isVisible = true;            // 是否显示
 
-    #region 私有字段
+    #region 私有字段（替换NoteData为自定义Key状态）
     private SpriteRenderer spriteRenderer;
     private KeyData _chartKeyData;           // 从ChartData读取的Key初始数据
     private List<KeyCommand> _keyCommands;   // 该Key的所有指令列表
-    private List<ShiftCommand> _shiftCommands = new List<ShiftCommand>(); // Shift指令缓存
-    private List<MoveCommand> _moveCommands = new List<MoveCommand>();   // Move指令缓存
+    private List<KeyShiftCommand> _shiftCommands = new List<KeyShiftCommand>(); // Shift指令缓存
+    private List<KeyMoveCommand> _moveCommands = new List<KeyMoveCommand>();   // Move指令缓存
     private bool _isInitialized = false;     // 初始化完成标记
+
+    // 替换NoteData的核心状态字段
+    private float _currentX;                 // 当前X坐标
+    private float _currentY;                 // 当前Y坐标
+    private bool _currentVisible;            // 当前显示状态
+    private int _noteIndex;                  // 音符索引（原NoteData.NoteIndex）
     #endregion
 
     #region 生命周期
@@ -41,11 +46,8 @@ public class Key_move : MonoBehaviour
         // 初始化视觉状态
         InitVisualState();
 
-        // 【核心修改】移除依赖ChartData的初始化逻辑，移到InitAfterChartLoaded
-        // LoadKeyDataFromChart();
-        // ValidateKeyIndex(); 
-        // InitNoteData();
-        // InitAllCommands();
+        // 初始化核心状态（替代NoteData）
+        InitKeyState();
 
         _isInitialized = true;
     }
@@ -73,7 +75,7 @@ public class Key_move : MonoBehaviour
         ExecuteMoveCommands(currentTime);
         ExecuteShowHideCommands(currentTime);
 
-        // 同步NoteData坐标到Transform
+        // 同步自定义状态到Transform
         SyncPosition();
     }
 
@@ -107,31 +109,39 @@ public class Key_move : MonoBehaviour
         // 执行依赖ChartData的初始化逻辑
         LoadKeyDataFromChart();
         ValidateKeyIndex();
-        InitNoteData();
         InitAllCommands();
 
         Debug.Log($"[{gameObject.name}] Key{keyIndex} 谱面解析后初始化完成");
     }
     #endregion
 
-    #region 新增：未播放时重置Key状态
+    #region 核心状态初始化/重置（替换NoteData）
+    /// <summary>
+    /// 初始化Key核心状态（替代NoteData初始化）
+    /// </summary>
+    private void InitKeyState()
+    {
+        _noteIndex = keyIndex;
+        _currentX = initialPos.x;
+        _currentY = initialPos.y;
+        _currentVisible = isVisible;
+    }
+
     /// <summary>
     /// 游戏未播放时，将Key重置到初始状态
     /// </summary>
     private void ResetKeyToInitialState()
     {
-        if (noteData == null) return;
-
         // 重置坐标到初始值
         float initX = _chartKeyData != null ? _chartKeyData.x : initialPos.x;
         float initY = _chartKeyData != null ? _chartKeyData.y : initialPos.y;
-        noteData.x = initX;
-        noteData.y = initY;
+        _currentX = initX;
+        _currentY = initY;
         SyncPosition();
 
         // 重置显示状态
         bool initVisible = _chartKeyData != null ? (_chartKeyData.show == 1) : isVisible;
-        noteData.isVisible = initVisible;
+        _currentVisible = initVisible;
         gameObject.SetActive(initVisible);
     }
     #endregion
@@ -147,12 +157,6 @@ public class Key_move : MonoBehaviour
             Debug.LogError($"[{gameObject.name}] Key_move组件：未找到SpriteRenderer组件！");
             enabled = false;
             return;
-        }
-
-        if (noteData == null)
-        {
-            Debug.LogWarning($"[{gameObject.name}] Key_move组件：NoteData未赋值，自动创建新实例！");
-            noteData = new NoteData();
         }
     }
 
@@ -207,30 +211,12 @@ public class Key_move : MonoBehaviour
             .OrderBy(cmd => cmd.startTime)
             .ToList() ?? new List<KeyCommand>();
 
+        // 更新核心状态为ChartData中的初始值
+        _currentX = _chartKeyData.x;
+        _currentY = _chartKeyData.y;
+        _currentVisible = _chartKeyData.show == 1;
+
         Debug.Log($"LoadKeyDataFromChart: 加载Key{keyIndex}的初始状态（x:{_chartKeyData.x}, y:{_chartKeyData.y}, show:{_chartKeyData.show}），指令数：{_keyCommands.Count}");
-    }
-
-    /// <summary>
-    /// 初始化NoteData（优先ChartData配置）
-    /// </summary>
-    private void InitNoteData()
-    {
-        // 优先使用ChartData的初始值，否则用备用配置
-        float initX = _chartKeyData != null ? _chartKeyData.x : initialPos.x;
-        float initY = _chartKeyData != null ? _chartKeyData.y : initialPos.y;
-        bool initVisible = _chartKeyData != null ? (_chartKeyData.show == 1) : isVisible;
-
-        // 赋值核心字段
-        noteData.NoteIndex = keyIndex;
-        noteData.KeyIndex = keyIndex;
-        noteData.x = initX;
-        noteData.y = initY;
-        noteData.isVisible = initVisible;
-        noteData.commands ??= new List<Command>(); // 初始化指令列表
-
-        // 同步初始位置和显示状态
-        transform.position = new Vector3(initX, initY, transform.position.z);
-        gameObject.SetActive(initVisible);
     }
 
     /// <summary>
@@ -273,17 +259,9 @@ public class Key_move : MonoBehaviour
     /// </summary>
     private void CreateShiftCommandFromKeyCmd(KeyCommand keyCmd)
     {
-        Command shiftCmdData = new Command
-        {
-            timeA = keyCmd.startTime,
-            timeB = keyCmd.endTime,
-            x1 = keyCmd.x1,
-            y1 = keyCmd.y1,
-            x2 = keyCmd.x2,
-            y2 = keyCmd.y2
-        };
-
-        ShiftCommand shiftCmd = new ShiftCommand(noteData, shiftCmdData);
+        // 构建Shift指令所需的参数（直接使用KeyCommand字段）
+        // 直接使用KeyCommand创建指令
+        KeyShiftCommand shiftCmd = new KeyShiftCommand(this, keyCmd);
         _shiftCommands.Add(shiftCmd);
         Debug.Log($"InitAllCommands: Key{keyIndex} 创建Drift(Shift)指令（{keyCmd.startTime}~{keyCmd.endTime}）");
     }
@@ -299,7 +277,8 @@ public class Key_move : MonoBehaviour
             return;
         }
 
-        MoveCommand moveCmd = new MoveCommand(noteData, keyCmd.filename);
+        // 替换MoveCommand的构造参数，直接传入当前Key的状态引用
+        KeyMoveCommand moveCmd = new KeyMoveCommand(this, keyCmd.filename);
         _moveCommands.Add(moveCmd);
         useMoveFirst = true;
         Debug.Log($"InitAllCommands: Key{keyIndex} 创建Move指令（JSON：{keyCmd.filename}）");
@@ -310,17 +289,18 @@ public class Key_move : MonoBehaviour
     /// </summary>
     private void CreateBackupShiftCommand()
     {
-        Command shiftCmdData = new Command
+        // 构造一个简化的KeyCommand用于备用配置
+        KeyCommand backupCmd = new KeyCommand
         {
-            timeA = shiftStartTime,
-            timeB = shiftEndTime,
-            x1 = noteData.x,
-            y1 = noteData.y,
+            keyIndex = this.keyIndex,
+            startTime = shiftStartTime,
+            endTime = shiftEndTime,
+            x1 = _currentX,
+            y1 = _currentY,
             x2 = shiftTargetPos.x,
             y2 = shiftTargetPos.y
         };
-
-        ShiftCommand shiftCmd = new ShiftCommand(noteData, shiftCmdData);
+        KeyShiftCommand shiftCmd = new KeyShiftCommand(this, backupCmd);
         _shiftCommands.Add(shiftCmd);
         Debug.Log($"InitAllCommands: Key{keyIndex} 创建备用Shift指令");
     }
@@ -336,7 +316,7 @@ public class Key_move : MonoBehaviour
             return;
         }
 
-        MoveCommand moveCmd = new MoveCommand(noteData, moveJsonPath);
+        KeyMoveCommand moveCmd = new KeyMoveCommand(this, moveJsonPath);
         _moveCommands.Add(moveCmd);
         Debug.Log($"InitAllCommands: Key{keyIndex} 创建备用Move指令（JSON：{moveJsonPath}）");
     }
@@ -353,7 +333,7 @@ public class Key_move : MonoBehaviour
 
         foreach (var shiftCmd in _shiftCommands)
         {
-            shiftCmd?.UpdatePosition(currentTime, deltaTime);
+            shiftCmd?.UpdateKeyPosition(currentTime, deltaTime);
         }
     }
 
@@ -366,7 +346,7 @@ public class Key_move : MonoBehaviour
 
         foreach (var moveCmd in _moveCommands)
         {
-            moveCmd?.UpdatePosition(currentTime);
+            moveCmd?.UpdateKeyPosition(currentTime);
         }
     }
 
@@ -384,11 +364,11 @@ public class Key_move : MonoBehaviour
             switch (keyCmd.cmdType?.ToLower())
             {
                 case "hide":
-                    noteData.isVisible = false;
+                    _currentVisible = false;
                     gameObject.SetActive(false);
                     break;
                 case "show":
-                    noteData.isVisible = true;
+                    _currentVisible = true;
                     gameObject.SetActive(true);
                     break;
             }
@@ -396,12 +376,11 @@ public class Key_move : MonoBehaviour
     }
 
     /// <summary>
-    /// 同步NoteData坐标到Transform
+    /// 同步自定义坐标状态到Transform
     /// </summary>
     private void SyncPosition()
     {
-        if (noteData == null) return;
-        transform.position = new Vector3(noteData.x, noteData.y, transform.position.z);
+        transform.position = new Vector3(_currentX, _currentY, transform.position.z);
     }
     #endregion
 
@@ -411,16 +390,16 @@ public class Key_move : MonoBehaviour
     /// </summary>
     public void ResetKeyState()
     {
-        if (!IsKeyIndexValid() || noteData == null) return;
+        if (!IsKeyIndexValid()) return;
 
         // 重置坐标
-        noteData.x = _chartKeyData != null ? _chartKeyData.x : initialPos.x;
-        noteData.y = _chartKeyData != null ? _chartKeyData.y : initialPos.y;
+        _currentX = _chartKeyData != null ? _chartKeyData.x : initialPos.x;
+        _currentY = _chartKeyData != null ? _chartKeyData.y : initialPos.y;
         SyncPosition();
 
         // 重置显示状态
-        noteData.isVisible = _chartKeyData != null ? (_chartKeyData.show == 1) : isVisible;
-        gameObject.SetActive(noteData.isVisible);
+        _currentVisible = _chartKeyData != null ? (_chartKeyData.show == 1) : isVisible;
+        gameObject.SetActive(_currentVisible);
 
         // 清空并重新初始化指令
         _shiftCommands.Clear();
@@ -463,4 +442,127 @@ public class Key_move : MonoBehaviour
         return ChartData.Instance.keyIds.Contains(keyIndex);
     }
     #endregion
+
+    #region 对外暴露的状态修改接口（供Shift/Move指令调用）
+    /// <summary>
+    /// 更新Key的坐标（供Shift/Move指令调用）
+    /// </summary>
+    /// <param name="newX">新X坐标</param>
+    /// <param name="newY">新Y坐标</param>
+    public void UpdatePosition(float newX, float newY)
+    {
+        _currentX = newX;
+        _currentY = newY;
+    }
+
+    /// <summary>
+    /// 获取当前X坐标
+    /// </summary>
+    public float CurrentX => _currentX;
+
+    /// <summary>
+    /// 获取当前Y坐标
+    /// </summary>
+    public float CurrentY => _currentY;
+
+    /// <summary>
+    /// 获取当前显示状态
+    /// </summary>
+    public bool CurrentVisible => _currentVisible;
+
+    /// <summary>
+    /// 获取Key索引
+    /// </summary>
+    public int KeyIndex => keyIndex;
+    #endregion
+}
+
+// 配套修改KeyShiftCommand（简化版，适配Key_move的状态）
+public class KeyShiftCommand
+{
+    private Key_move _keyMove;
+    private float _startTime;
+    private float _endTime;
+    private float _startX;
+    private float _startY;
+    private float _targetX;
+    private float _targetY;
+    private bool _isExecuting;
+
+    public KeyShiftCommand(Key_move keyMove, KeyCommand cmd)
+    {
+        _keyMove = keyMove;
+        _startTime = cmd.startTime;
+        _endTime = cmd.endTime;
+        _startX = cmd.x1;
+        _startY = cmd.y1;
+        _targetX = cmd.x2;
+        _targetY = cmd.y2;
+        _isExecuting = false;
+    }
+
+    public void UpdateKeyPosition(float currentTime, float deltaTime)
+    {
+        if (currentTime < _startTime || currentTime > _endTime)
+        {
+            _isExecuting = false;
+            return;
+        }
+
+        _isExecuting = true;
+        float progress = (currentTime - _startTime) / (_endTime - _startTime);
+        progress = Mathf.Clamp01(progress);
+
+        float newX = Mathf.Lerp(_startX, _targetX, progress);
+        float newY = Mathf.Lerp(_startY, _targetY, progress);
+
+        _keyMove.UpdatePosition(newX, newY);
+    }
+}
+
+// 配套修改KeyMoveCommand（简化版，适配Key_move的状态）
+public class KeyMoveCommand
+{
+    private Key_move _keyMove;
+    private string _jsonPath;
+    private List<Vector2> _frames = new List<Vector2>();
+    private float _frameDuration;
+    private int _totalFrames;
+
+    public KeyMoveCommand(Key_move keyMove, string jsonPath)
+    {
+        _keyMove = keyMove;
+        _jsonPath = jsonPath;
+        LoadMoveFrames();
+    }
+
+    private void LoadMoveFrames()
+    {
+        // 此处实现JSON帧数据加载逻辑（示例）
+        // 实际需根据你的JSON格式解析帧坐标和时长
+        TextAsset jsonFile = Resources.Load<TextAsset>(_jsonPath);
+        if (jsonFile == null)
+        {
+            Debug.LogError($"MoveCommand: 未找到JSON文件 {_jsonPath}");
+            return;
+        }
+
+        // 解析JSON逻辑（示例）
+        // var frameData = JsonUtility.FromJson<MoveFrameData>(jsonFile.text);
+        // _frames = frameData.frames;
+        // _frameDuration = frameData.frameDuration;
+        // _totalFrames = _frames.Count;
+    }
+
+    public void UpdateKeyPosition(float currentTime)
+    {
+        if (_totalFrames == 0) return;
+
+        // 计算当前帧索引
+        int currentFrame = Mathf.FloorToInt(currentTime / _frameDuration);
+        currentFrame = Mathf.Clamp(currentFrame, 0, _totalFrames - 1);
+
+        Vector2 targetPos = _frames[currentFrame];
+        _keyMove.UpdatePosition(targetPos.x, targetPos.y);
+    }
 }
