@@ -5,6 +5,7 @@ using System.Collections.Generic;
 /// <summary>
 /// Drag音符组件：判定时间±0.1秒内检测到按下/按住即有效
 /// 适配NoteTools的NoteData结构和判定体系
+/// 【修改】依赖谱面加载完成（CurrentPlayTime≠-1）后再执行核心逻辑
 /// </summary>
 [RequireComponent(typeof(SpriteRenderer))]
 public class Drag : MonoBehaviour
@@ -33,9 +34,12 @@ public class Drag : MonoBehaviour
     private SpriteRenderer spriteRenderer;          // 精灵渲染器缓存
     private Coroutine destroyCoroutine;             // 销毁协程
     private bool hasSwitchedSprite = false;         // 是否已切换判定精灵
+    // 【新增】标记判定逻辑是否初始化完成（依赖谱面加载完成）
+    private bool isJudgeLogicInitialized = false;
 
     void Awake()
     {
+        // ========== 仅保留基础组件初始化（不依赖谱面的逻辑） ==========
         // 组件缓存与安全校验
         spriteRenderer = GetComponent<SpriteRenderer>();
         if (spriteRenderer == null)
@@ -45,13 +49,59 @@ public class Drag : MonoBehaviour
             return;
         }
 
-        if (noteTools == null)
+        // 初始化默认精灵（仅赋值，不依赖谱面）
+        if (defaultDragSprite != null)
         {
-            Debug.LogError($"[{gameObject.name}] Drag组件：未引用NoteTools实例！");
-            enabled = false;
+            spriteRenderer.sprite = defaultDragSprite;
+        }
+        else
+        {
+            Debug.LogWarning($"[{gameObject.name}] Drag组件：未设置默认Drag精灵！");
+        }
+
+    }
+
+    void Update()
+    {
+        // 1. 基础校验：GameManager未初始化则直接返回
+        if (GameManager.Instance == null) return;
+        
+        // 2. 核心检测：谱面未加载解析完成（CurrentPlayTime=-1）则返回，不执行任何逻辑
+        float currentMusicTime = GameManager.Instance.CurrentPlayTime;
+        if (currentMusicTime == -1)
+        {
             return;
         }
 
+        // 3. 判定逻辑初始化：仅在首次检测到谱面加载完成后执行一次
+        if (!isJudgeLogicInitialized)
+        {
+            InitJudgeLogic();
+            isJudgeLogicInitialized = true;
+            Debug.Log($"[{gameObject.name}] Drag组件：谱面加载完成，判定逻辑初始化完成");
+        }
+
+        // 4. 已判定/已切换精灵 → 跳过更新
+        if (isJudged || hasSwitchedSprite) return;
+
+        // 5. 执行Drag判定逻辑（仅谱面加载完成后执行）
+        CheckDragJudge(currentMusicTime);
+
+        // 6. 判定完成后执行精灵切换和延迟销毁
+        if (isJudged && !hasSwitchedSprite)
+        {
+            SwitchDragSprite();
+            hasSwitchedSprite = true;
+            if (destroyCoroutine == null)
+            {
+                destroyCoroutine = StartCoroutine(DelayDestroyNote());
+            }
+        }
+    }
+
+    #region 【新增】判定逻辑初始化（依赖谱面加载完成）
+    private void InitJudgeLogic()
+    {
         // 初始化NoteData（轻量化结构）
         if (noteData == null)
         {
@@ -66,41 +116,18 @@ public class Drag : MonoBehaviour
         }
         else
         {
-            // 同步NoteData坐标到物体
+            // 同步NoteData坐标到物体（谱面加载完成后再同步，避免提前赋值无效）
             transform.position = new Vector2(noteData.x, noteData.y);
         }
 
-        // 初始化默认精灵
-        if (defaultDragSprite != null)
-        {
-            spriteRenderer.sprite = defaultDragSprite;
-        }
-        else
-        {
-            Debug.LogWarning($"[{gameObject.name}] Drag组件：未设置默认Drag精灵！");
-        }
+        // 可选：补充judgeTime的初始化（若需要从NoteData/谱面数据读取）
+        // 示例：如果judgeTime需要从NoteData的扩展字段读取，可在此处赋值
+        // if (noteData != null && noteData.extraData.ContainsKey("judgeTime"))
+        // {
+        //     judgeTime = float.Parse(noteData.extraData["judgeTime"]);
+        // }
     }
-
-    void Update()
-    {
-        // 已判定/已切换精灵 → 跳过更新
-        if (isJudged || hasSwitchedSprite) return;
-
-        // 获取NoteTools统一管理的音乐时间（替代直接使用Time.time）
-        float currentMusicTime = GameManager.Instance.CurrentPlayTime;
-        CheckDragJudge(currentMusicTime);
-
-        // 判定完成后执行精灵切换和延迟销毁
-        if (isJudged && !hasSwitchedSprite)
-        {
-            SwitchDragSprite();
-            hasSwitchedSprite = true;
-            if (destroyCoroutine == null)
-            {
-                destroyCoroutine = StartCoroutine(DelayDestroyNote());
-            }
-        }
-    }
+    #endregion
 
     #region 核心：Drag判定逻辑（二级判定体系：Perfect/Miss）
     private void CheckDragJudge(float currentTime)
@@ -131,7 +158,7 @@ public class Drag : MonoBehaviour
     }
     #endregion
 
-    #region 精灵切换 + 延迟销毁
+    #region 精灵切换 + 延迟销毁（无修改）
     private void SwitchDragSprite()
     {
         Sprite targetSprite = judgeResult switch
@@ -160,7 +187,7 @@ public class Drag : MonoBehaviour
     }
     #endregion
 
-    #region 外部接口
+    #region 外部接口（无修改）
     /// <summary>
     /// 获取Drag判定结果
     /// </summary>

@@ -24,9 +24,13 @@ public class Tap : MonoBehaviour
     private DropToCommand dropToCommand;
     private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
     private List<MoveCommand> moveCommands = new List<MoveCommand>();
+    
+    // 新增：标记是否已完成指令初始化（依赖谱面加载解析完成）
+    private bool isCommandsInitialized = false;
 
     void Awake()
     {
+        // Awake仅初始化SpriteRenderer，不执行依赖谱面的逻辑
         spriteRenderer = GetComponent<SpriteRenderer>();
         
         if (spriteRenderer == null)
@@ -45,36 +49,50 @@ public class Tap : MonoBehaviour
             Debug.LogWarning($"[{gameObject.name}] Tap组件：未设置默认Tap精灵！");
         }
 
+        // NoteData校验保留（但指令初始化延迟）
         if (noteData == null)
         {
             Debug.LogError($"[{gameObject.name}] Tap组件：NoteData未赋值！");
             enabled = false;
             return;
         }
-
-        // 初始化位置（从NoteData读取，ChartRunner已完成Command映射）
-        transform.position = new Vector2(noteData.x, noteData.y);
-        // 初始化指令（移除cmd.type检测，直接解析Tap/DTap的Shift/Move/DropTo指令）
-        InitCommands();
     }
 
     void Update()
     {
+        // 1. 基础校验：GameManager未初始化则直接返回
+        if (GameManager.Instance == null) return;
+        
+        // 2. 核心检测：谱面未加载解析完成（CurrentPlayTime=-1）则返回，不执行任何逻辑
+        float currentTime = GameManager.Instance.CurrentPlayTime;
+        if (currentTime == -1)
+        {
+            return;
+        }
+
+        // 3. 指令初始化：仅在首次检测到谱面加载完成后执行一次
+        if (!isCommandsInitialized)
+        {
+            InitCommands();
+            // 初始化完成后设置初始位置（从NoteData读取）
+            transform.position = new Vector2(noteData.x, noteData.y);
+            isCommandsInitialized = true;
+            Debug.Log($"[{gameObject.name}] Tap组件：谱面加载完成，指令初始化完成");
+        }
+
+        // 4. 精灵已切换（判定完成）：仅同步位置
         if (hasSwitchedSprite)
         {
             SyncPosition();
             return;
         }
 
-        if (GameManager.Instance == null) return;
-        float currentTime = GameManager.Instance.CurrentPlayTime;
-
-        // 执行所有指令（保留Shift/Move，Tap需要支持）
+        // 5. 执行所有指令（仅在谱面加载完成后执行）
         ExecuteShiftCommands(currentTime);
         ExecuteMoveCommands(currentTime);
         ExecuteDropToJudge(currentTime);
 
-        // 检测判定结果
+        // 6. 检测判定结果（仅在谱面加载完成后执行）
         if (dropToCommand != null && dropToCommand.judgeResult != JudgeResult.None)
         {
             SwitchJudgeSprite(dropToCommand.judgeResult);
@@ -82,6 +100,7 @@ public class Tap : MonoBehaviour
             StartCoroutine(DelayDestroyNote());
         }
 
+        // 7. 同步坐标
         SyncPosition();
     }
 

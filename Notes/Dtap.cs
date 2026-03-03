@@ -8,27 +8,22 @@ public class Dtap : MonoBehaviour
     [Header("核心关联")]
     public NoteData noteData;
 
-    [Header("第一个Tap配置")]
-    public Sprite tap1DefaultSprite;
-    public Sprite tap1PerfectSprite;
-    public Sprite tap1GoodSprite;
-    public Sprite tap1BadSprite;
-    public Sprite tap1MissSprite;
-    public Vector2 tap1Offset = new Vector2(-0.5f, 0);
+    [Header("Tap精灵配置（Tap1/Tap2共用）")]
+    public Sprite tapDefaultSprite;
+    public Sprite tapPerfectSprite;
+    public Sprite tapGoodSprite;
+    public Sprite tapBadSprite;
+    public Sprite tapMissSprite;
 
-    [Header("第二个Tap配置")]
-    public Sprite tap2DefaultSprite;
-    public Sprite tap2PerfectSprite;
-    public Sprite tap2GoodSprite;
-    public Sprite tap2BadSprite;
-    public Sprite tap2MissSprite;
+    [Header("位置偏移")]
+    public Vector2 tap1Offset = new Vector2(-0.5f, 0);
     public Vector2 tap2Offset = new Vector2(0.5f, 0);
 
     [Header("判定规则")]
     public float secondJudgeWindow = 0.3f;
     public float destroyDelay = 0.2f;
 
-    // 指令缓存（完全对齐Tap.cs）
+    // 指令缓存
     private DropToCommand dropToCommand;
     private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
     private List<MoveCommand> moveCommands = new List<MoveCommand>();
@@ -47,11 +42,14 @@ public class Dtap : MonoBehaviour
     private JudgeResult tap1Result = JudgeResult.None;
     private JudgeResult tap2Result = JudgeResult.None;
 
+    // 新增：标记是否已完成指令初始化（依赖谱面加载解析完成）
+    private bool isCommandsInitialized = false;
+
     private Coroutine destroyCoroutine;
 
     void Awake()
     {
-        // 核心依赖校验（对齐Tap.cs）
+        // 核心依赖校验
         if (noteData == null)
         {
             Debug.LogError($"[{gameObject.name}] Dtap组件：NoteData未赋值！");
@@ -59,39 +57,50 @@ public class Dtap : MonoBehaviour
             return;
         }
 
-        // 初始化位置（对齐Tap.cs）
-        transform.position = new Vector2(noteData.x, noteData.y);
-
-        // 初始化指令（完全复用Tap.cs的InitCommands逻辑）
-        InitCommands();
-
-        // 创建双Tap视觉物体（DTap独有逻辑）
+        // 创建双Tap视觉物体（仅初始化视觉组件，指令和位置初始化延迟）
         CreateTapNoteObjects();
 
-        // 初始化精灵（DTap独有）
+        // 初始化精灵（仅视觉层，判定逻辑延迟）
         ResetTapSprites();
     }
 
     void Update()
     {
-        // 判定完成后仅同步位置（对齐Tap.cs的hasSwitchedSprite逻辑）
+        // 1. 基础校验：GameManager未初始化则直接返回
+        if (GameManager.Instance == null) return;
+        
+        // 2. 核心检测：谱面未加载解析完成（CurrentPlayTime=-1）则返回，不执行任何逻辑
+        float currentTime = GameManager.Instance.CurrentPlayTime;
+        if (currentTime == -1)
+        {
+            return;
+        }
+
+        // 3. 指令初始化：仅在首次检测到谱面加载完成后执行一次
+        if (!isCommandsInitialized)
+        {
+            InitCommands();
+            // 初始化完成后设置初始位置（从NoteData读取）
+            transform.position = new Vector2(noteData.x, noteData.y);
+            isCommandsInitialized = true;
+            Debug.Log($"[{gameObject.name}] Dtap组件：谱面加载完成，指令初始化完成");
+        }
+
+        // 4. 判定已完成：仅同步位置
         if (hasCompletedJudge)
         {
             SyncPosition();
             return;
         }
 
-        if (GameManager.Instance == null) return;
-        float currentTime = GameManager.Instance.CurrentPlayTime;
-
-        // 执行指令（完全对齐Tap.cs的执行顺序）
+        // 5. 执行所有指令（仅在谱面加载完成后执行）
         ExecuteShiftCommands(currentTime);
         ExecuteMoveCommands(currentTime);
 
-        // 双Tap判定逻辑（DTap核心扩展）
+        // 6. 双Tap判定逻辑
         if (!isTap1Judged)
         {
-            ExecuteDropToJudge(currentTime); // 复用Tap的DropTo判定逻辑
+            ExecuteDropToJudge(currentTime);
             if (dropToCommand != null && dropToCommand.judgeResult != JudgeResult.None)
             {
                 tap1Result = dropToCommand.judgeResult;
@@ -102,10 +111,10 @@ public class Dtap : MonoBehaviour
         }
         else if (isTap1Judged && !isTap2Judged)
         {
-            CheckTap2Judge(currentTime); // DTap独有：第二个Tap判定
+            CheckTap2Judge(currentTime);
         }
 
-        // 两次判定完成后处理（对齐Tap.cs的精灵切换+延迟销毁）
+        // 7. 两次判定完成后处理
         if (isTap1Judged && isTap2Judged && !hasCompletedJudge)
         {
             SwitchJudgeSprites();
@@ -113,13 +122,13 @@ public class Dtap : MonoBehaviour
             destroyCoroutine = StartCoroutine(DelayDestroyNote());
         }
 
-        // 同步坐标（完全对齐Tap.cs）
+        // 8. 同步坐标
         SyncPosition();
     }
 
-    #region 指令体系（完全模仿Tap.cs）
+    #region 指令体系
     /// <summary>
-    /// 初始化指令：移除NoteType筛选，直接解析Command（和Tap.cs完全一致）
+    /// 初始化指令：移除NoteType筛选，直接解析Command
     /// </summary>
     private void InitCommands()
     {
@@ -129,20 +138,20 @@ public class Dtap : MonoBehaviour
             return;
         }
 
-        // 取第一个Command（ChartRunner保证仅绑定首次出现的指令）
+        // 取第一个Command
         Command cmd = noteData.commands[0];
 
-        // 1. 初始化DropTo指令（核心判定）
+        // 1. 初始化DropTo指令
         dropToCommand = new DropToCommand(noteData, cmd, cmd.key_name);
 
-        // 2. 初始化Shift指令（x2/y2非0时）
+        // 2. 初始化Shift指令
         if (cmd.x2 != 0 || cmd.y2 != 0)
         {
             shiftCommands.Add(new ShiftCommand(noteData, cmd));
             Debug.Log($"[{gameObject.name}] Dtap音符ID:{cmd.num} 初始化Shift指令（目标坐标：{cmd.x2},{cmd.y2}）");
         }
 
-        // 3. 初始化Move指令（filename非空时）
+        // 3. 初始化Move指令
         if (!string.IsNullOrEmpty(cmd.filename))
         {
             moveCommands.Add(new MoveCommand(noteData, cmd.filename));
@@ -158,7 +167,7 @@ public class Dtap : MonoBehaviour
     }
 
     /// <summary>
-    /// 执行Shift指令（完全对齐Tap.cs）
+    /// 执行Shift指令
     /// </summary>
     private void ExecuteShiftCommands(float currentTime)
     {
@@ -169,7 +178,7 @@ public class Dtap : MonoBehaviour
     }
 
     /// <summary>
-    /// 执行Move指令（完全对齐Tap.cs）
+    /// 执行Move指令
     /// </summary>
     private void ExecuteMoveCommands(float currentTime)
     {
@@ -180,7 +189,7 @@ public class Dtap : MonoBehaviour
     }
 
     /// <summary>
-    /// 执行DropTo判定（完全模仿Tap.cs的ExecuteDropToJudge）
+    /// 执行DropTo判定
     /// </summary>
     private void ExecuteDropToJudge(float currentTime)
     {
@@ -192,22 +201,22 @@ public class Dtap : MonoBehaviour
     }
 
     /// <summary>
-    /// 同步坐标（完全对齐Tap.cs）
+    /// 同步坐标
     /// </summary>
     private void SyncPosition()
     {
         if (noteData == null) return;
         transform.position = new Vector2(noteData.x, noteData.y);
         
-        // 同步子Tap偏移（DTap独有扩展）
+        // 同步子Tap偏移
         if (tap1Obj != null) tap1Obj.transform.localPosition = tap1Offset;
         if (tap2Obj != null) tap2Obj.transform.localPosition = tap2Offset;
     }
     #endregion
 
-    #region 双Tap视觉与判定（DTap独有逻辑）
+    #region 双Tap视觉与判定
     /// <summary>
-    /// 创建双Tap视觉物体（DTap独有）
+    /// 创建双Tap视觉物体
     /// </summary>
     private void CreateTapNoteObjects()
     {
@@ -230,33 +239,28 @@ public class Dtap : MonoBehaviour
     }
 
     /// <summary>
-    /// 校验精灵配置（DTap独有）
+    /// 校验精灵配置
     /// </summary>
     private void ValidateSpriteConfig()
     {
-        if (tap1DefaultSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap1默认精灵未配置！");
-        if (tap1PerfectSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap1 Perfect精灵未配置！");
-        if (tap1GoodSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap1 Good精灵未配置！");
-        if (tap1BadSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap1 Bad精灵未配置！");
-        if (tap1MissSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap1 Miss精灵未配置！");
-        if (tap2DefaultSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap2默认精灵未配置！");
-        if (tap2PerfectSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap2 Perfect精灵未配置！");
-        if (tap2GoodSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap2 Good精灵未配置！");
-        if (tap2BadSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap2 Bad精灵未配置！");
-        if (tap2MissSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap2 Miss精灵未配置！");
+        if (tapDefaultSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap默认精灵未配置！");
+        if (tapPerfectSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap Perfect精灵未配置！");
+        if (tapGoodSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap Good精灵未配置！");
+        if (tapBadSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap Bad精灵未配置！");
+        if (tapMissSprite == null) Debug.LogWarning($"[{gameObject.name}] Tap Miss精灵未配置！");
     }
 
     /// <summary>
-    /// 重置精灵为默认状态（DTap独有）
+    /// 重置精灵为默认状态
     /// </summary>
     private void ResetTapSprites()
     {
-        tap1Renderer.sprite = tap1DefaultSprite;
-        tap2Renderer.sprite = tap2DefaultSprite;
+        if(tap1Renderer != null) tap1Renderer.sprite = tapDefaultSprite;
+        if(tap2Renderer != null) tap2Renderer.sprite = tapDefaultSprite;
     }
 
     /// <summary>
-    /// 检测第二个Tap的判定（DTap独有）
+    /// 检测第二个Tap的判定
     /// </summary>
     private void CheckTap2Judge(float currentTime)
     {
@@ -271,7 +275,7 @@ public class Dtap : MonoBehaviour
             return;
         }
 
-        // 检测按键按下（复用Command的key_name）
+        // 检测按键按下
         if (noteData.commands.Count > 0)
         {
             Command cmd = noteData.commands[0];
@@ -286,45 +290,34 @@ public class Dtap : MonoBehaviour
     }
 
     /// <summary>
-    /// 切换判定精灵（模仿Tap.cs的SwitchJudgeSprite，扩展双Tap逻辑）
+    /// 切换判定精灵（Tap1/Tap2共用同一套Sprite）
     /// </summary>
     private void SwitchJudgeSprites()
     {
-        // Tap1精灵切换（完全模仿Tap.cs的SwitchJudgeSprite）
-        tap1Renderer.sprite = tap1Result switch
+        // 根据判定结果获取对应的精灵
+        Sprite targetSprite = tap1Result switch
         {
-            JudgeResult.Perfect => tap1PerfectSprite,
-            JudgeResult.Good => tap1GoodSprite,
-            JudgeResult.Bad => tap1BadSprite,
-            JudgeResult.Miss => tap1MissSprite,
-            _ => tap1DefaultSprite
+            JudgeResult.Perfect => tapPerfectSprite,
+            JudgeResult.Good => tapGoodSprite,
+            JudgeResult.Bad => tapBadSprite,
+            JudgeResult.Miss => tapMissSprite,
+            _ => tapDefaultSprite
         };
 
-        // Tap2复用Tap1的精灵样式（DTap视觉逻辑）
-        tap2Renderer.sprite = tap1Result switch
-        {
-            JudgeResult.Perfect => tap2PerfectSprite,
-            JudgeResult.Good => tap2GoodSprite,
-            JudgeResult.Bad => tap2BadSprite,
-            JudgeResult.Miss => tap2MissSprite,
-            _ => tap2DefaultSprite
-        };
+        // 给两个Tap设置相同的精灵
+        if(tap1Renderer != null) tap1Renderer.sprite = targetSprite;
+        if(tap2Renderer != null) tap2Renderer.sprite = targetSprite;
 
-        // 精灵空值容错（模仿Tap.cs）
-        if (tap1Renderer.sprite == null)
+        // 精灵空值容错
+        if (tap1Renderer?.sprite == null)
         {
-            Debug.LogError($"[{gameObject.name}] Dtap组件：Tap1 {tap1Result}对应的精灵未赋值！");
-            tap1Renderer.sprite = tap1DefaultSprite;
-        }
-        if (tap2Renderer.sprite == null)
-        {
-            Debug.LogError($"[{gameObject.name}] Dtap组件：Tap2 {tap1Result}对应的精灵未赋值！");
-            tap2Renderer.sprite = tap2DefaultSprite;
+            Debug.LogError($"[{gameObject.name}] Dtap组件：{tap1Result}对应的精灵未赋值！");
+            ResetTapSprites();
         }
     }
     #endregion
 
-    #region 销毁逻辑（完全模仿Tap.cs）
+    #region 销毁逻辑
     private IEnumerator DelayDestroyNote()
     {
         yield return new WaitForSeconds(destroyDelay);
@@ -342,7 +335,7 @@ public class Dtap : MonoBehaviour
     #endregion
 
     /// <summary>
-    /// 重置DTap状态（重玩时调用，扩展方法）
+    /// 重置DTap状态
     /// </summary>
     public void ResetDtapState()
     {
@@ -358,6 +351,7 @@ public class Dtap : MonoBehaviour
         tap1JudgeTime = 0f;
         tap1Result = JudgeResult.None;
         tap2Result = JudgeResult.None;
+        isCommandsInitialized = false; // 重置指令初始化标记
 
         if (dropToCommand != null)
         {

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -47,74 +48,107 @@ public class LoadChart : MonoBehaviour
     public List<int> KeyIds => keyIds ?? new List<int>();
     public string ChartContent => chartContent;
 
-    public IEnumerator LoadChartFile(string fileName)
+    /// <summary>
+    /// 异步加载谱面文件（核心修改：适配async/await + 加载成功后执行ParseChart）
+    /// </summary>
+    /// <param name="fileName">谱面文件名（如chart.txt）</param>
+    /// <returns>是否加载成功</returns>
+    public async Task<bool> LoadChartFileAsync(string fileName)
     {
         if (GameManager.Instance == null)
         {
-            Debug.LogError("LoadChart.LoadChartFile: GameManager.Instance 为空！");
-            yield break;
+            Debug.LogError("LoadChart.LoadChartFileAsync: GameManager.Instance 为空！");
+            return false;
         }
+
         string path = Path.Combine(Application.streamingAssetsPath, fileName);
         Debug.Log($"开始加载谱面：{path}");
         
-        // 先处理文件加载（包含yield return，移出try-catch块）
-        bool loadSuccess = false;
-        if (Application.platform == RuntimePlatform.Android || Application.platform == RuntimePlatform.IPhonePlayer)
+        try
         {
-            using (UnityWebRequest www = UnityWebRequest.Get(path))
+            // 分平台异步加载文件
+            if (Application.platform == RuntimePlatform.Android || Application.platform == RuntimePlatform.IPhonePlayer)
             {
-                yield return www.SendWebRequest(); // 移出try-catch，解决CS1626
+                using (UnityWebRequest www = UnityWebRequest.Get(path))
+                {
+                    // 异步等待网络请求完成（替代原yield return）
+                    var requestOperation = www.SendWebRequest();
+                    while (!requestOperation.isDone)
+                    {
+                        await Task.Yield(); // 让出主线程，避免阻塞Unity渲染
+                    }
+
 #if UNITY_2020_1_OR_NEWER
-                if (www.result == UnityWebRequest.Result.Success)
+                    if (www.result != UnityWebRequest.Result.Success)
 #else
-                if (www.isDone && string.IsNullOrEmpty(www.error))
+                    if (!string.IsNullOrEmpty(www.error))
 #endif
-                {
+                    {
+                        Debug.LogError($"加载谱面失败：{www.error}");
+                        return false;
+                    }
+
                     chartContent = www.downloadHandler.text;
-                    loadSuccess = true;
                 }
-                else
-                {
-                    Debug.LogError($"加载谱面失败：{www.error}");
-                    yield break;
-                }
-            }
-        }
-        else
-        {
-            if (File.Exists(path))
-            {
-                chartContent = File.ReadAllText(path);
-                loadSuccess = true;
             }
             else
             {
-                Debug.LogError($"谱面文件不存在：{path}");
-                yield break;
-            }
-        }
+                if (!File.Exists(path))
+                {
+                    Debug.LogError($"谱面文件不存在：{path}");
+                    return false;
+                }
 
-        // 加载成功后，处理解析逻辑（放入try-catch）
+                // 异步读取文件（替代原同步ReadAllText）
+                chartContent = await File.ReadAllTextAsync(path);
+            }
+
+            // 加载成功后预处理头部和行数据（保留原有逻辑）
+            if (!SplitChartContent(out List<string> trackKeyLines, out List<string> spectrumLines))
+            {
+                return false;
+            }
+            ParseChartHeader(trackKeyLines);
+            _spectrumLines = spectrumLines;
+            
+            // 核心修复：异步加载成功后主动执行ParseChart解析谱面
+            ParseChart();
+            
+            // 日志调整：打印轨道按键列表+数量
+            Debug.Log($"谱面加载完成！轨道按键列表：[{string.Join(",", KeyIds)}] | 轨道按键数：{KeyCount} | 音符数：{noteCount} | 指令数：{cmdCount} | 总时长：{totalDuration}s");
+            return true;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"加载谱面异常：{e.Message}\n{e.StackTrace}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 兼容旧协程接口（可选保留，若有其他地方调用）
+    /// </summary>
+    public IEnumerator LoadChartFile(string fileName)
+    {
+        bool loadSuccess = false;
+        // 异步转协程适配
+        var loadTask = LoadChartFileAsync(fileName);
+        while (!loadTask.IsCompleted)
+        {
+            yield return null;
+        }
+        loadSuccess = loadTask.Result;
+
         if (loadSuccess)
         {
             try
             {
-                // 拆分轨道按键和谱面内容，解析头部
-                if (!SplitChartContent(out List<string> trackKeyLines, out List<string> spectrumLines))
-                {
-                    yield break;
-                }
-                ParseChartHeader(trackKeyLines);
-                // 缓存谱面行到本地字段（不再依赖ChartData）
-                _spectrumLines = spectrumLines;
-                
-                // 日志调整：打印轨道按键列表+数量
-                Debug.Log($"谱面加载完成！轨道按键列表：[{string.Join(",", KeyIds)}] | 轨道按键数：{KeyCount} | 音符数：{noteCount} | 指令数：{cmdCount} | 总时长：{totalDuration}s");
+                // 注：由于异步方法内已调用ParseChart，此处可注释避免重复解析
+                // ParseChart(); // 解析谱面内容到ChartData
             }
             catch (Exception e)
             {
                 Debug.LogError($"解析谱面异常：{e.Message}\n{e.StackTrace}");
-                yield break;
             }
         }
     }
@@ -266,13 +300,12 @@ public class LoadChart : MonoBehaviour
         keyIds.Sort();
     }
 
-    public ChartData ParseChart()
+    public void ParseChart()
     {
-        // 改为校验本地缓存的谱面行，不再依赖ChartData
         if (string.IsNullOrEmpty(chartContent) || _spectrumLines == null || _spectrumLines.Count == 0)
         {
             Debug.LogError("ParseChart: 谱面内容为空，无法解析");
-            return null;
+            return;
         }
         
         // 解析前先重置数据，避免切换谱面时数据残留
@@ -285,11 +318,11 @@ public class LoadChart : MonoBehaviour
         
         // 使用本地缓存的谱面行解析
         ParseKeyInitialState(_spectrumLines);
-        ParseCommands(_spectrumLines, ChartData.Instance);
+        ParseCommands(_spectrumLines);
         ChartData.Instance.SortCommandsByTime();
         
-        Debug.Log($"谱面解析完成：KeyData数={ChartData.Instance.keyDatas.Count} | Command数={ChartData.Instance.commands.Count}");
-        return ChartData.Instance;
+        Debug.Log($"LoadChart: 谱面解析完成: KeyData数={ChartData.Instance.keyDatas.Count} | Command数={ChartData.Instance.commands.Count}");
+        return;
     }
 
     /// <summary>
@@ -350,7 +383,7 @@ public class LoadChart : MonoBehaviour
     /// <summary>
     /// 解析谱面指令
     /// </summary>
-    private void ParseCommands(List<string> spectrumLines, ChartData chartData)
+    private void ParseCommands(List<string> spectrumLines)
     {
         int commandStartIndex = -1;
         // 查找指令起始标记行
@@ -385,16 +418,16 @@ public class LoadChart : MonoBehaviour
             switch (parts[0])
             {
                 case "#":
-                    ParseNoteCommand(parts, chartData, isScorable: true, isNoteFirstTimeOccured: true);
+                    ParseNoteCommand(parts, isScorable: true, isNoteFirstTimeOccured: true);
                     break;
                 case "!":
-                    ParseNoteCommand(parts, chartData, isScorable: false, isNoteFirstTimeOccured: true);
+                    ParseNoteCommand(parts, isScorable: false, isNoteFirstTimeOccured: true);
                     break;
                 case "%":
-                    ParseNoteCommand(parts, chartData, isScorable: null, isNoteFirstTimeOccured: false);
+                    ParseNoteCommand(parts, isScorable: null, isNoteFirstTimeOccured: false);
                     break;
                 case "$":
-                    ParseKeyMoveCommand(parts, chartData);
+                    ParseKeyMoveCommand(parts);
                     break;
                 default:
                     Debug.LogWarning($"ParseCommands: 未知指令标识，行内容：{line}");
@@ -406,7 +439,7 @@ public class LoadChart : MonoBehaviour
     /// <summary>
     /// 解析音符指令
     /// </summary>
-    private void ParseNoteCommand(string[] parts, ChartData chartData, bool? isScorable, bool isNoteFirstTimeOccured)
+    private void ParseNoteCommand(string[] parts, bool? isScorable, bool isNoteFirstTimeOccured)
     {
         try
         {
@@ -427,19 +460,19 @@ public class LoadChart : MonoBehaviour
             if (isScorable.HasValue)
             {
                 currentScorable = isScorable.Value;
-                if (!chartData.isScorable.ContainsKey(num))
+                if (!ChartData.Instance.isScorable.ContainsKey(num))
                 {
-                    chartData.isScorable.Add(num, currentScorable);
+                    ChartData.Instance.isScorable.Add(num, currentScorable);
                 }
                 else
                 {
                     Debug.LogWarning($"ParseNoteCommand: Note{num} 重复首次标记，覆盖原有记分状态");
-                    chartData.isScorable[num] = currentScorable;
+                    ChartData.Instance.isScorable[num] = currentScorable;
                 }
             }
             else
             {
-                if (!chartData.isScorable.TryGetValue(num, out currentScorable))
+                if (!ChartData.Instance.isScorable.TryGetValue(num, out currentScorable))
                 {
                     Debug.LogWarning($"ParseNoteCommand: 非首次note{num}未找到首次状态，默认记分");
                     currentScorable = true;
@@ -541,7 +574,7 @@ public class LoadChart : MonoBehaviour
                 commandName = cmd,
                 isNoteFirstTimeOccured = isNoteFirstTimeOccured
             };
-            chartData.AddNoteData(noteCmd);
+            ChartData.Instance.AddNoteData(noteCmd);
         }
         catch (Exception e)
         {
@@ -552,7 +585,7 @@ public class LoadChart : MonoBehaviour
     /// <summary>
     /// 解析按键移动指令（KeyCommand）
     /// </summary>
-    private void ParseKeyMoveCommand(string[] parts, ChartData chartData)
+    private void ParseKeyMoveCommand(string[] parts)
     {
         try
         {
@@ -615,7 +648,7 @@ public class LoadChart : MonoBehaviour
             }
 
             // 查找对应KeyData，添加KeyCommand
-            KeyData targetKeyData = chartData.keyDatas.FirstOrDefault(k => k.keyName == keyIndex);
+            KeyData targetKeyData = ChartData.Instance.keyDatas.FirstOrDefault(k => k.keyName == keyIndex);
             if (targetKeyData == null)
             {
                 Debug.LogWarning($"ParseKeyMoveCommand: 未找到按键{keyIndex}的初始状态，跳过指令 | parts={string.Join(",", parts)}");
@@ -659,3 +692,4 @@ public class LoadChart : MonoBehaviour
         };
     }
 }
+

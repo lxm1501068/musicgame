@@ -69,9 +69,8 @@ public class KeyData
     }
 }
 
-// 移除KeyMoveData，替换为KeyCommand（因为你已定义KeyCommand）
-[CreateAssetMenu(fileName = "ChartDataSingleton", menuName = "节奏游戏/ChartData单例")]
-public class ChartData : ScriptableObject
+// 改为MonoBehaviour，移除CreateAssetMenu（MonoBehaviour不能作为资源创建）
+public class ChartData : MonoBehaviour
 {
     private static ChartData _instance;
     public static ChartData Instance
@@ -79,25 +78,51 @@ public class ChartData : ScriptableObject
         get
         {
             if (_instance != null) return _instance;
-            _instance = Resources.Load<ChartData>("ChartDataSingleton");
+            
+            // 先查找场景中已存在的实例
+            _instance = FindObjectOfType<ChartData>();
+            
             if (_instance == null)
             {
-                _instance = CreateInstance<ChartData>();
-                _instance.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild | HideFlags.HideInHierarchy;
-                Debug.LogWarning("未找到ChartData单例资源，已自动创建运行时实例");
+                // 场景中没有则创建GameObject并挂载组件
+                GameObject singletonObj = new GameObject("ChartData_Singleton");
+                _instance = singletonObj.AddComponent<ChartData>();
+                // 设置为DontDestroyOnLoad，保证切换场景不销毁
+                DontDestroyOnLoad(singletonObj);
+                
+                // 隐藏GameObject并设置不保存标记
+                singletonObj.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild | HideFlags.HideInHierarchy;
+                Debug.LogWarning("未找到ChartData实例，已自动创建全局单例对象");
             }
             return _instance;
         }
     }
 
+    // 序列化字段，方便在Inspector中查看/编辑
+    [Header("谱面核心数据")]
     public List<KeyData> keyDatas = new List<KeyData>();  // 按键初始状态
     public List<Command> commands = new List<Command>();  // 所有音符指令
     public float totalDuration;                           // 谱面总时长
     public int noteCount;                                // 音符总数量
     public int keyCount;                                 // 按键总数量
+    [Header("运行时数据（无需手动编辑）")]
     public Dictionary<int, bool> isScorable = new Dictionary<int, bool>(); 
-    // 新增：存储轨道按键ID列表（对应chart.txt第二行的内容）
-    public List<int> keyIds = new List<int>(); 
+    public List<int> keyIds = new List<int>(); // 存储轨道按键ID列表（对应chart.txt第二行的内容）
+
+    // 防止重复创建单例（MonoBehaviour特有）
+    private void Awake()
+    {
+        if (_instance == null)
+        {
+            _instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+        else if (_instance != this)
+        {
+            // 如果已有实例，销毁重复的
+            Destroy(gameObject);
+        }
+    }
 
     // ========== 恢复的 ClearChartContent 方法 ==========
     /// <summary>

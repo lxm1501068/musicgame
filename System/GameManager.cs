@@ -11,9 +11,13 @@ public class GameManager : MonoBehaviour
     public LoadChart chartLoader;   // 谱面加载/解析
     public string initialChartFileName = "chart.txt"; // 初始加载的谱面文件名
 
-    // 播放状态与时间相关字段
+    // 新增：谱面加载解析完成标志位
+    private bool _isChartLoadedAndParsed = false;
+
+    // 播放状态和时间信息
     public bool IsPlaying { get; private set; } // 播放状态（只读，外部仅能通过方法修改）
     public float chartStartTime { get; private set; } // 播放起始时间锚点
+
     private float pauseAccumulator = 0; // 暂停时长累计（抵消暂停的时间差）
     private float lastPauseTime = 0; // 上次暂停的时间
     private float pausedPlayTime = 0; // 新增：记录暂停瞬间的播放时间
@@ -23,6 +27,12 @@ public class GameManager : MonoBehaviour
     {
         get
         {
+            // 核心修改：加载解析未完成时返回 -1
+            if (!_isChartLoadedAndParsed)
+            {
+                return -1;
+            }
+
             if (!IsPlaying)
             {
                 // 修复：暂停时返回「暂停瞬间的播放时间」，而非动态计算
@@ -32,6 +42,8 @@ public class GameManager : MonoBehaviour
             return Time.time - chartStartTime - pauseAccumulator;
         }
     }
+
+    private GUIStyle debugStyle; // 调试信息的GUI样式
 
     private void Awake()
     {
@@ -83,13 +95,16 @@ public class GameManager : MonoBehaviour
     }
     #endregion
 
-    #region 谱面加载&解析（核心新增逻辑）
+    #region 谱面加载&解析（异步版核心逻辑）
     /// <summary>
-    /// 加载并解析谱面（封装LoadChart的流程）
+    /// 加载并解析谱面（异步版：等待解析完成后再播放）
     /// </summary>
     /// <param name="fileName">谱面文件名（如chart.txt）</param>
-    public void LoadAndParseChart(string fileName)
+    public async void LoadAndParseChart(string fileName)
     {
+        // 开始加载时标记为未完成
+        _isChartLoadedAndParsed = false;
+
         // 前置校验
         if (chartLoader == null)
         {
@@ -99,34 +114,42 @@ public class GameManager : MonoBehaviour
         
         // 清空旧谱面数据
         ClearChartData();
+        Debug.Log($"清空旧谱面数据");
         
-        // 加载并解析谱面（协程）
-        StartCoroutine(chartLoader.LoadChartFile(fileName));
-        // 加载完成后解析（注：若需等待加载完成，需调整为回调/异步）
-        Invoke(nameof(ParseLoadedChart), 0.1f); // 简易等待：实际项目建议用回调/AsyncAwait
+        // 异步等待谱面加载完成（替代原Invoke的简易延迟）
+        await chartLoader.LoadChartFileAsync(fileName);
+        
+        // 加载完成后执行解析
+        ParseLoadedChart();
+        
+        // 校验解析是否成功（未成功则不播放）
+        if (!_isChartLoadedAndParsed)
+        {
+            Debug.LogError("GameManager.LoadAndParseChart: 谱面解析/音符创建失败，无法播放！");
+            return;
+        }
+        
+        // 确保加载→解析→音符创建全完成后，再开始播放
+        Debug.Log($"GameManager: 谱面加载&解析完成，开始播放");
+        PlayChart();
     }
 
     /// <summary>
-    /// 解析已加载的谱面内容
+    /// 解析已加载的谱面内容（逻辑不变，保留状态标记）
     /// </summary>
     private void ParseLoadedChart()
     {
         if (string.IsNullOrEmpty(chartLoader.ChartContent))
         {
             Debug.LogError("GameManager.ParseLoadedChart: 谱面内容为空，解析失败！");
-            return;
-        }
-        
-        // 解析谱面数据到ChartData
-        ChartData parsedData = chartLoader.ParseChart();
-        if (parsedData == null)
-        {
-            Debug.LogError("GameManager.ParseLoadedChart: 谱面解析失败！");
-            return;
+            return; // 解析失败，保持_isChartLoadedAndParsed=false
         }
         
         // 预创建所有音符
         PreCreateAllNotes();
+
+        // 加载解析+音符创建完成后标记为已完成
+        _isChartLoadedAndParsed = true;
         
         Debug.Log("GameManager: 谱面加载→解析→音符创建 全流程完成！");
     }
@@ -136,18 +159,14 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public void ClearChartData()
     {
+        // 核心修改：清空数据时标记为未完成
+        _isChartLoadedAndParsed = false;
+
         // 清空ChartData的核心数据
         ChartData.Instance.ResetChartData();
         
         // 清空LoadChart的缓存
         ChartData.Instance.ClearChartContent();
-        
-        // 重置音符创建状态
-        if (chartRunner != null)
-        {
-            // 若ChartRunner有清空音符的方法，此处调用（需补充ChartRunner的ClearNotes）
-            // chartRunner.ClearAllNotes();
-        }
         
         Debug.Log("GameManager: 旧谱面数据已清空");
     }
@@ -209,6 +228,12 @@ public class GameManager : MonoBehaviour
             pauseAccumulator += Time.time - lastPauseTime;
             chartStartTime = Time.time - (pausedPlayTime + pauseAccumulator);
             Debug.Log($"GameManager: 谱面恢复播放 | 累计暂停时长：{pauseAccumulator:F2}秒");
+
+            // 恢复播放时隐藏恢复按钮
+            if (RecoverButton.Instance != null)
+            {
+                RecoverButton.Instance.SetButtonVisible(false);
+            }
         }
         else
         {
@@ -216,6 +241,12 @@ public class GameManager : MonoBehaviour
             lastPauseTime = Time.time;
             pausedPlayTime = CurrentPlayTime; // 关键：保存暂停时的播放时间
             Debug.Log($"GameManager: 谱面已暂停 | 暂停时播放时间：{pausedPlayTime:F2}秒");
+
+            // 暂停时显示恢复按钮
+            if (RecoverButton.Instance != null)
+            {
+                RecoverButton.Instance.SetButtonVisible(true);
+            }
         }
     }
 
@@ -255,5 +286,28 @@ public class GameManager : MonoBehaviour
         {
             Instance = null;
         }
+    }
+    private void Update()
+    {
+        if(CurrentPlayTime == -1)return; // 加载解析未完成时跳过输入检测
+        // 检测Esc键按下（GetKeyDown确保仅触发一次）+ 当前处于播放状态
+        if (Input.GetKeyDown(KeyCode.Escape) && IsPlaying)
+        {
+            TogglePlay(); // 执行暂停/恢复逻辑
+            Debug.Log("GameManager: 检测到Esc键按下，执行TogglePlay()");
+        }
+    }
+    private void OnGUI()
+    {
+        if (debugStyle == null)
+        {
+            debugStyle = new GUIStyle();
+            debugStyle.fontSize = 30;
+            debugStyle.normal.textColor = Color.white;
+            debugStyle.padding = new RectOffset(10, 10, 5, 5);
+        }
+
+        string displayText = $"chartStartTime: {chartStartTime:F2} 秒";
+        GUI.Label(new Rect(20, 20, 400, 50), displayText, debugStyle);
     }
 }

@@ -37,6 +37,9 @@ public class Flick : MonoBehaviour
     private float goodThreshold => 0.2f;
     private float badThreshold => 0.3f;
 
+    // 新增：标记是否已完成指令初始化（依赖谱面加载解析完成）
+    private bool isCommandsInitialized = false;
+
     void Awake()
     {
         spriteRenderer = GetComponent<SpriteRenderer>();
@@ -65,30 +68,54 @@ public class Flick : MonoBehaviour
         }
         validOtherKeyIndices.RemoveAll(x => x == 11); // 移除11号键（Flick核心键）
 
-        // 初始化指令（模仿Tap的InitCommands逻辑）
-        InitCommands();
+        // NoteData校验
+        if (noteData == null)
+        {
+            Debug.LogError($"[{gameObject.name}] Flick组件：NoteData未赋值！");
+            enabled = false;
+            return;
+        }
+
+        // 移除Awake中的InitCommands调用，延迟到Update中谱面加载完成后执行
     }
 
     void Update()
     {
+        // 1. 基础校验：GameManager未初始化则直接返回
+        if (GameManager.Instance == null) return;
+        
+        // 2. 核心检测：谱面未加载解析完成（CurrentPlayTime=-1）则返回，不执行任何逻辑
+        float currentTime = GameManager.Instance.CurrentPlayTime;
+        if (currentTime == -1)
+        {
+            return;
+        }
+
+        // 3. 指令初始化：仅在首次检测到谱面加载完成后执行一次
+        if (!isCommandsInitialized)
+        {
+            InitCommands();
+            // 初始化完成后设置初始位置（从NoteData读取）
+            transform.position = new Vector2(noteData.x, noteData.y);
+            isCommandsInitialized = true;
+            Debug.Log($"[{gameObject.name}] Flick组件：谱面加载完成，指令初始化完成");
+        }
+
         if (hasSwitchedSprite)
         {
             SyncPosition();
             return;
         }
 
-        if (GameManager.Instance == null) return;
-        float currentTime = GameManager.Instance.CurrentPlayTime;
-
-        // 执行所有指令（完全模仿Tap的执行顺序）
+        // 4. 执行所有指令（仅在谱面加载完成后执行）
         ExecuteShiftCommands(currentTime);
         ExecuteMoveCommands(currentTime);
         ExecuteDropToJudge(currentTime);
 
-        // 检测Flick核心判定
+        // 5. 检测Flick核心判定（仅在谱面加载完成后执行）
         CheckFlickJudge(currentTime);
 
-        // 判定完成后切换精灵 + 启动延迟销毁（模仿Tap的逻辑）
+        // 6. 判定完成后切换精灵 + 启动延迟销毁（模仿Tap的逻辑）
         if (isJudged && !hasSwitchedSprite)
         {
             SwitchJudgeSprite(judgeResult);
