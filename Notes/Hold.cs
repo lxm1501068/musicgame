@@ -103,28 +103,32 @@ public class Hold : MonoBehaviour
     }
     #endregion
 
-    #region 指令初始化
+    #region 指令初始化（修改点：使用不区分大小写的前缀匹配）
     private void InitCommands()
     {
         if (noteData.commands == null || noteData.commands.Count == 0) return;
 
         foreach (var cmd in noteData.commands)
         {
-            switch (cmd.commandName)
+            string cmdName = cmd.commandName?.ToLower() ?? "";
+
+            // DropTo 指令（可能带有额外参数，如 "drop_to 3"）
+            if (cmdName.StartsWith("drop_to"))
             {
-                case "Shift":
-                    shiftCommand = new ShiftCommand(noteData, cmd);
-                    break;
-                case "DropTo":
-                    dropToCommand = new DropToCommand(noteData, cmd, cmd.key_name);
-                    dropToCommand.perfectThreshold = 0.15f;
-                    dropToCommand.goodThreshold = 0.25f;
-                    dropToCommand.badThreshold = 0.35f;
-                    break;
-                case "Move":
-                    if (!string.IsNullOrEmpty(cmd.filename))
-                        moveCommand = new MoveCommand(noteData, cmd.filename);
-                    break;
+                dropToCommand = new DropToCommand(noteData, cmd, cmd.key_name);
+                dropToCommand.perfectThreshold = 0.15f;
+                dropToCommand.goodThreshold = 0.25f;
+                dropToCommand.badThreshold = 0.35f;
+            }
+            // Shift 指令（若将来使用）
+            else if (cmdName == "shift")
+            {
+                shiftCommand = new ShiftCommand(noteData, cmd);
+            }
+            // Move 指令
+            else if (cmdName == "move" && !string.IsNullOrEmpty(cmd.filename))
+            {
+                moveCommand = new MoveCommand(noteData, cmd.filename);
             }
         }
 

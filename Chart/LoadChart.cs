@@ -27,7 +27,7 @@ using UnityEngine.Networking;
 // # tap 3 move 14.000 16.000 move_1.json
 // # hold 4 drop_to 1 18.000 20.000 4 -4 5 -5 3
 // # dtap 5 drop_to 0 20.000 22.000 4 -4 5 -5
-// # flick 6 drop_to 2 22.000 24.000 -1 1 0 0
+// # flick 6 22.000 24.000   // 简化后的 Flick 格式
 // $ key 0 hide 24.000
 // $ key 1 drift 24.000 26.000 4 -4 3 -3
 // $ key 0 show 26.000
@@ -437,7 +437,7 @@ public class LoadChart : MonoBehaviour
     }
 
     /// <summary>
-    /// 解析音符指令
+    /// 解析音符指令（已修改为支持简化 Flick 格式）
     /// </summary>
     private void ParseNoteCommand(string[] parts, bool? isScorable, bool isNoteFirstTimeOccured)
     {
@@ -481,80 +481,101 @@ public class LoadChart : MonoBehaviour
 
             float timeA = 0, timeB = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0;
             int keyName = 0;
-            string cmd = parts[3];
+            string cmd = "";
             string noteMoveFileName = "";
 
-            switch (cmd)
+            // 针对 Flick 音符的特殊处理：简单格式 "flick num start_time end_time"
+            if (noteType == NoteType.Flick)
             {
-                case "destroy":
-                    if (parts.Length >= 5)
-                    {
-                        float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
-                    }
-                    break;
-                case "move":
-                    if (parts.Length >= 6)
-                    {
-                        float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
-                        float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
-                    }
-                    if (parts.Length >= 7)
-                    {
-                        noteMoveFileName = parts[6];
-                    }
-                    break;
-                case "drop_to":
-                    if (parts.Length >= 5)
-                    {
-                        int.TryParse(parts[4], out keyName);
-                    }
-                    if (parts.Length >= 7)
-                    {
-                        float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
-                        float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
-                    }
-                    if (parts.Length >= 11)
-                    {
-                        float.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
-                        float.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
-                        float.TryParse(parts[9], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
-                        float.TryParse(parts[10], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
-                    }
-                    if (noteType == NoteType.Hold && parts.Length >= 12)
-                    {
-                        cmd += $" {parts[11]}";
-                    }
-                    break;
-                case "drift":
-                    if (parts.Length >= 6)
-                    {
-                        float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
-                        float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
-                    }
-                    if (parts.Length >= 10)
-                    {
-                        float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
-                        float.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
-                        float.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
-                        float.TryParse(parts[9], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
-                    }
-                    break;
-                default:
-                    Debug.LogWarning($"ParseNoteCommand: 未处理的note指令类型 {cmd}，按默认逻辑解析");
-                    int defaultParamIndex = cmd == "drop_to" ? 5 : 4;
-                    if (parts.Length >= defaultParamIndex + 1)
-                    {
-                        float.TryParse(parts[defaultParamIndex], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
-                        float.TryParse(parts[defaultParamIndex + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
-                    }
-                    if (parts.Length >= defaultParamIndex + 6)
-                    {
-                        float.TryParse(parts[defaultParamIndex + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
-                        float.TryParse(parts[defaultParamIndex + 3], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
-                        float.TryParse(parts[defaultParamIndex + 4], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
-                        float.TryParse(parts[defaultParamIndex + 5], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
-                    }
-                    break;
+                if (parts.Length >= 5)
+                {
+                    float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                    float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                    // 其他参数保持默认值0
+                    cmd = "flick_simple"; // 自定义指令名，便于识别
+                }
+                else
+                {
+                    Debug.LogWarning($"ParseNoteCommand: Flick指令缺少时间参数，parts={string.Join(",", parts)}");
+                }
+            }
+            else
+            {
+                // 原有逻辑：根据 cmd (parts[3]) 解析其他音符类型
+                cmd = parts[3];  // 指令类型，如 drop_to, drift, move, destroy 等
+
+                switch (cmd)
+                {
+                    case "destroy":
+                        if (parts.Length >= 5)
+                        {
+                            float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                        }
+                        break;
+                    case "move":
+                        if (parts.Length >= 6)
+                        {
+                            float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                            float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                        }
+                        if (parts.Length >= 7)
+                        {
+                            noteMoveFileName = parts[6];
+                        }
+                        break;
+                    case "drop_to":
+                        if (parts.Length >= 5)
+                        {
+                            int.TryParse(parts[4], out keyName);
+                        }
+                        if (parts.Length >= 7)
+                        {
+                            float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                            float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                        }
+                        if (parts.Length >= 11)
+                        {
+                            float.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
+                            float.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
+                            float.TryParse(parts[9], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
+                            float.TryParse(parts[10], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
+                        }
+                        if (noteType == NoteType.Hold && parts.Length >= 12)
+                        {
+                            cmd += $" {parts[11]}";
+                        }
+                        break;
+                    case "drift":
+                        if (parts.Length >= 6)
+                        {
+                            float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                            float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                        }
+                        if (parts.Length >= 10)
+                        {
+                            float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
+                            float.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
+                            float.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
+                            float.TryParse(parts[9], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
+                        }
+                        break;
+                    default:
+                        Debug.LogWarning($"ParseNoteCommand: 未处理的note指令类型 {cmd}，按默认逻辑解析");
+                        int defaultParamIndex = cmd == "drop_to" ? 5 : 4;
+                        if (parts.Length >= defaultParamIndex + 1)
+                        {
+                            float.TryParse(parts[defaultParamIndex], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                            float.TryParse(parts[defaultParamIndex + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                        }
+                        if (parts.Length >= defaultParamIndex + 6)
+                        {
+                            float.TryParse(parts[defaultParamIndex + 2], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
+                            float.TryParse(parts[defaultParamIndex + 3], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
+                            float.TryParse(parts[defaultParamIndex + 4], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
+                            float.TryParse(parts[defaultParamIndex + 5], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
+                        }
+                        break;
+                }
             }
 
             // 构建音符指令并添加到ChartData
@@ -692,4 +713,3 @@ public class LoadChart : MonoBehaviour
         };
     }
 }
-
