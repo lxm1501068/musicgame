@@ -120,7 +120,7 @@ public class MoveCommand
 {
     public string jsonPath;      // JSON路径
     public NoteData note;        // 关联音符
-    private List<MoveFrame> _frames; // 帧数据移到这里（不再依赖NoteData）
+    private List<MoveFrame> _frames; // 帧数据移到这里）
 
     // 构造函数
     public MoveCommand(NoteData note, string jsonPath)
@@ -131,7 +131,7 @@ public class MoveCommand
         if (_frames != null) _frames.Sort((a, b) => a.time.CompareTo(b.time));
     }
 
-    // 加载JSON帧数据（不再调用NoteData的SetMoveFrames）
+    // 加载JSON帧数据
     private List<MoveFrame> LoadMoveFrames()
     {
         try

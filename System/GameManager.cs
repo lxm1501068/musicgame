@@ -12,23 +12,18 @@ public class GameManager : MonoBehaviour
     public string initialChartFileName = "chart.txt"; // 初始加载的谱面文件名
 
     // 新增：谱面加载解析完成标志位
-    private bool _isChartLoadedAndParsed = false;
+    public bool IsChartLoadedAndParsed;
 
     // 播放状态和时间信息
-    public bool IsPlaying { get; private set; } // 播放状态（只读，外部仅能通过方法修改）
-    public float chartStartTime { get; private set; } // 播放起始时间锚点
-
-    private float pauseAccumulator = 0; // 暂停时长累计（抵消暂停的时间差）
-    private float lastPauseTime = 0; // 上次暂停的时间
-    private float pausedPlayTime = 0; // 新增：记录暂停瞬间的播放时间
-
+    public bool IsPlaying;// 播放状态（只读，外部仅能通过方法修改）
+    public float chartStartTime;
     // 供音符访问的「精准播放时间」（排除暂停）
     public float CurrentPlayTime
     {
         get
         {
             // 核心修改：加载解析未完成时返回 -1
-            if (!_isChartLoadedAndParsed)
+            if (!IsChartLoadedAndParsed)
             {
                 return -1;
             }
@@ -42,8 +37,10 @@ public class GameManager : MonoBehaviour
             return Time.time - chartStartTime - pauseAccumulator;
         }
     }
-
-    private GUIStyle debugStyle; // 调试信息的GUI样式
+    public float debugCurrentPlayTime; // 可选：用于在Unity编辑器中实时显示当前播放时间（仅供调试）
+    private float pauseAccumulator = 0; // 暂停时长累计（抵消暂停的时间差）
+    private float lastPauseTime = 0; // 上次暂停的时间
+    private float pausedPlayTime = 0; // 新增：记录暂停瞬间的播放时间
 
     private void Awake()
     {
@@ -103,7 +100,7 @@ public class GameManager : MonoBehaviour
     public async void LoadAndParseChart(string fileName)
     {
         // 开始加载时标记为未完成
-        _isChartLoadedAndParsed = false;
+        IsChartLoadedAndParsed = false;
 
         // 前置校验
         if (chartLoader == null)
@@ -123,7 +120,7 @@ public class GameManager : MonoBehaviour
         ParseLoadedChart();
         
         // 校验解析是否成功（未成功则不播放）
-        if (!_isChartLoadedAndParsed)
+        if (!IsChartLoadedAndParsed)
         {
             Debug.LogError("GameManager.LoadAndParseChart: 谱面解析/音符创建失败，无法播放！");
             return;
@@ -142,14 +139,14 @@ public class GameManager : MonoBehaviour
         if (string.IsNullOrEmpty(chartLoader.ChartContent))
         {
             Debug.LogError("GameManager.ParseLoadedChart: 谱面内容为空，解析失败！");
-            return; // 解析失败，保持_isChartLoadedAndParsed=false
+            return; // 解析失败，保持IsChartLoadedAndParsed=false
         }
         
         // 预创建所有音符
         PreCreateAllNotes();
 
         // 加载解析+音符创建完成后标记为已完成
-        _isChartLoadedAndParsed = true;
+        IsChartLoadedAndParsed = true;
         
         Debug.Log("GameManager: 谱面加载→解析→音符创建 全流程完成！");
     }
@@ -160,7 +157,7 @@ public class GameManager : MonoBehaviour
     public void ClearChartData()
     {
         // 核心修改：清空数据时标记为未完成
-        _isChartLoadedAndParsed = false;
+        IsChartLoadedAndParsed = false;
 
         // 清空ChartData的核心数据
         ChartData.Instance.ResetChartData();
@@ -289,6 +286,7 @@ public class GameManager : MonoBehaviour
     }
     private void Update()
     {
+        debugCurrentPlayTime = CurrentPlayTime;
         if(CurrentPlayTime == -1)return; // 加载解析未完成时跳过输入检测
         // 检测Esc键按下（GetKeyDown确保仅触发一次）+ 当前处于播放状态
         if (Input.GetKeyDown(KeyCode.Escape) && IsPlaying)
@@ -296,18 +294,5 @@ public class GameManager : MonoBehaviour
             TogglePlay(); // 执行暂停/恢复逻辑
             Debug.Log("GameManager: 检测到Esc键按下，执行TogglePlay()");
         }
-    }
-    private void OnGUI()
-    {
-        if (debugStyle == null)
-        {
-            debugStyle = new GUIStyle();
-            debugStyle.fontSize = 30;
-            debugStyle.normal.textColor = Color.white;
-            debugStyle.padding = new RectOffset(10, 10, 5, 5);
-        }
-
-        string displayText = $"chartStartTime: {chartStartTime:F2} 秒";
-        GUI.Label(new Rect(20, 20, 400, 50), displayText, debugStyle);
     }
 }

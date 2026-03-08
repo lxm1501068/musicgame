@@ -354,7 +354,7 @@ public class LoadChart : MonoBehaviour
         {
             string line = spectrumLines[i];
             // 遇到谱面指令标记行则停止
-            if (line.StartsWith("(note num time_a time_b x1 y1 x2 y2 command)")) break;
+            if (line.StartsWith("(note num command time_a time_b x1 y1 x2 y2)")) break;
             
             var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length == 4)
@@ -389,7 +389,7 @@ public class LoadChart : MonoBehaviour
         // 查找指令起始标记行
         for (int i = 0; i < spectrumLines.Count; i++)
         {
-            if (spectrumLines[i].StartsWith("(note num time_a time_b x1 y1 x2 y2 command)"))
+            if (spectrumLines[i].StartsWith("(note num command time_a time_b x1 y1 x2 y2)"))
             {
                 commandStartIndex = i + 1;
                 break;

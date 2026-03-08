@@ -21,7 +21,7 @@ public class ChartRunner : MonoBehaviour
     public bool IsNotesPreCreated { get; private set; } = false;
     #endregion
 
-    #region 仅保留：音符管理相关方法（播放控制已迁移到GameManager）
+    #region 音符管理相关方法（播放控制已迁移到GameManager）
     /// <summary>
     /// 预创建所有音符（供GameManager调用）
     /// </summary>
@@ -78,14 +78,11 @@ public class ChartRunner : MonoBehaviour
 
             allNotes.Add(noteObj);
             Debug.Log($"ChartRunner: 创建音符编号为{cmd.num} ");
-            noteObj.SetActive(false); // 初始隐藏，待游戏运行时显示
 
             Debug.Log($"ChartRunner: 预创建音符 ID:{cmd.num} 类型:{cmd.type} 触发时间:{cmd.timeA}");
         }
 
         IsNotesPreCreated = true;
-        // 新增：音符预创建完成后，销毁NoteParent和所有音符预制体
-        DestroyNoteParentAndPrefabs();
         Debug.Log($"ChartRunner: 所有音符预创建完成，共{allNotes.Count}个");
     }
 
@@ -102,47 +99,6 @@ public class ChartRunner : MonoBehaviour
         noteData.x = cmd.x1;                   // 初始X坐标（从cmd的x1读取）
         noteData.y = cmd.y1;                   // 初始Y坐标（从cmd的y1读取）
         noteData.isVisible = false;            // 初始隐藏，待时机显示
-    }
-
-    /// <summary>
-    /// 销毁NoteParent父物体和所有音符预制体
-    /// （注：预制体销毁后不可复用，需确保后续不再调用PreCreateAllNotes）
-    /// </summary>
-    private void DestroyNoteParentAndPrefabs()
-    {
-        // 1. 销毁NoteParent父物体（先判空避免空引用）
-        if (noteParent != null)
-        {
-            Destroy(noteParent.gameObject);
-            noteParent = null; // 清空引用，防止后续误访问
-            Debug.Log("ChartRunner: NoteParent父物体已销毁");
-        }
-
-        // 2. 销毁所有音符预制体并清空引用
-        DestroyPrefab(ref tapPrefab, "Tap");
-        DestroyPrefab(ref dtapPrefab, "Dtap");
-        DestroyPrefab(ref holdPrefab, "Hold");
-        DestroyPrefab(ref flickPrefab, "Flick");
-        DestroyPrefab(ref dragPrefab, "Drag");
-        Debug.Log("ChartRunner: 所有音符预制体已销毁");
-    }
-
-    /// <summary>
-    /// 通用预制体销毁方法（封装判空、销毁、清空引用逻辑）
-    /// </summary>
-    /// <param name="prefab">要销毁的预制体引用</param>
-    /// <param name="typeName">预制体类型名称（用于日志）</param>
-    private void DestroyPrefab(ref GameObject prefab, string typeName)
-    {
-        if (prefab != null)
-        {
-            Destroy(prefab);
-            prefab = null; // 清空引用，防止后续误访问空对象
-        }
-        else
-        {
-            Debug.LogWarning($"ChartRunner: {typeName}音符预制体引用为空，无需销毁");
-        }
     }
     #endregion
 }
