@@ -26,15 +26,17 @@ public class MoveFrameList
 #region 1. Shift指令类（速度+方向+终止时间+移动逻辑）
 public class ShiftCommand
 {
-    public float speed;          // 移动速度（坐标/秒）
-    public Vector2 direction;    // 移动方向（归一化）
-    public float endTime;        // 移动终止时间（音乐时间）
-    public NoteData note;        // 关联音符（仅操作x/y）
+    public float startTime;       // 新增：指令开始时间
+    public float speed;           // 移动速度（坐标/秒）
+    public Vector2 direction;     // 移动方向（归一化）
+    public float endTime;         // 移动终止时间（音乐时间）
+    public NoteData note;         // 关联音符（仅操作x/y）
 
     // 构造函数：从Command解析参数
     public ShiftCommand(NoteData note, Command cmd)
     {
         this.note = note;
+        this.startTime = cmd.timeA;   // 记录开始时间
         this.endTime = cmd.timeB;
 
         // 计算方向和速度
@@ -51,8 +53,8 @@ public class ShiftCommand
     // 每帧更新位置（仅操作note.x/note.y）
     public void UpdateNotePosition(float currentTime, float deltaTime)
     {
-        if (note == null || currentTime > endTime) return;
-
+        if (note == null || currentTime < startTime || currentTime > endTime) return; // 增加开始时间检查
+        //Debug.Log($"[ShiftCommand] 更新位置，currentTime={currentTime}, startTime={startTime}, endTime={endTime}, speed={speed}, direction={direction}");
         // 计算单帧移动距离
         Vector2 frameMove = direction * speed * deltaTime;
         note.x += frameMove.x;
@@ -78,7 +80,7 @@ public class DropToCommand : ShiftCommand
     public float badThreshold = 0.3f;
     public int KeyIndex;
 
-    // 判定结果移到这里（不再依赖NoteData）
+    // 判定结果移到这里
     public JudgeResult judgeResult = JudgeResult.None;
 
     // 构造函数
@@ -87,12 +89,15 @@ public class DropToCommand : ShiftCommand
         this.note = note; // 关联NoteData
         this.endTime = cmd.timeB; // 判定基准时间
         this.KeyIndex = KeyIndex; // 绑定按键序号
+        // startTime 已在基类中设置
     }
 
     // 判定方法（结果存在当前类的judgeResult）
     public void Judge(float currentTime, int KeyIndex)
     {
         if (note == null || judgeResult != JudgeResult.None) return;
+        // 可选的开始时间检查，判定通常在 endTime 附近进行，但如果当前时间远小于 startTime，不应该判定
+        if (currentTime < startTime) return;
 
         float timeDiff = currentTime - endTime;
         bool isKeyPressed = InputManager.Instance.IsGroupPressed(KeyIndex);
@@ -118,16 +123,18 @@ public class DropToCommand : ShiftCommand
 #region 3. Move指令类（JSON帧数据+插值移动）
 public class MoveCommand
 {
-    public string jsonPath;      // JSON路径
-    public NoteData note;        // 关联音符
-    private List<MoveFrame> _frames; // 帧数据移到这里）
+    public float startTime;       // 新增：指令开始时间
+    public string jsonPath;       // JSON路径
+    public NoteData note;         // 关联音符
+    private List<MoveFrame> _frames; // 帧数据
 
-    // 构造函数
-    public MoveCommand(NoteData note, string jsonPath)
+    // 构造函数：改为接受 Command，从中提取开始时间和文件名
+    public MoveCommand(NoteData note, Command cmd)
     {
         this.note = note;
-        this.jsonPath = jsonPath;
-        this._frames = LoadMoveFrames(); // 加载帧数据
+        this.startTime = cmd.timeA;          // 记录开始时间
+        this.jsonPath = cmd.json_filename;
+        this._frames = LoadMoveFrames();     // 加载帧数据
         if (_frames != null) _frames.Sort((a, b) => a.time.CompareTo(b.time));
     }
 
@@ -157,7 +164,7 @@ public class MoveCommand
     // 每帧更新位置（仅操作note.x/note.y）
     public void UpdateNotePosition(float currentTime)
     {
-        if (note == null || _frames == null || _frames.Count == 0) return;
+        if (note == null || _frames == null || _frames.Count == 0 || currentTime < startTime) return; // 增加开始时间检查
 
         MoveFrame prevFrame = null;
         MoveFrame nextFrame = null;

@@ -437,7 +437,7 @@ public class LoadChart : MonoBehaviour
     }
 
     /// <summary>
-    /// 解析音符指令（已修改为支持简化 Flick 格式）
+    /// 解析音符指令
     /// </summary>
     private void ParseNoteCommand(string[] parts, bool? isScorable, bool isNoteFirstTimeOccured)
     {
@@ -479,7 +479,7 @@ public class LoadChart : MonoBehaviour
                 }
             }
 
-            float timeA = 0, timeB = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+            float timeA = 0, timeB = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0, hold_duration = 0;
             int keyName = 0;
             string cmd = "";
             string noteMoveFileName = "";
@@ -542,7 +542,7 @@ public class LoadChart : MonoBehaviour
                         }
                         if (noteType == NoteType.Hold && parts.Length >= 12)
                         {
-                            cmd += $" {parts[11]}";
+                            float.TryParse(parts[11], NumberStyles.Float, CultureInfo.InvariantCulture, out hold_duration);
                         }
                         break;
                     case "drift":
@@ -591,8 +591,9 @@ public class LoadChart : MonoBehaviour
                 x2 = x2,
                 y2 = y2,
                 key_name = keyName,
-                filename = noteMoveFileName,
+                json_filename = noteMoveFileName,
                 commandName = cmd,
+                hold_duration = hold_duration,
                 isNoteFirstTimeOccured = isNoteFirstTimeOccured
             };
             ChartData.Instance.AddNoteData(noteCmd);
@@ -685,7 +686,7 @@ public class LoadChart : MonoBehaviour
                 y1 = y1,
                 x2 = x2,
                 y2 = y2,
-                filename = moveFileName,
+                json_filename = moveFileName,
                 cmdType = cmdType
             };
             targetKeyData.keyCommands.Add(keyCmd);

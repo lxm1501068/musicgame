@@ -42,6 +42,9 @@ public class Dtap : MonoBehaviour
     private bool isCommandsInitialized = false;
     private Coroutine destroyCoroutine;
 
+    // 【新增】第一个指令的开始时间
+    private float firstCommandStartTime;
+
     void Awake()
     {
         if (noteData == null)
@@ -54,7 +57,7 @@ public class Dtap : MonoBehaviour
         CreateTapNoteObjects();
         ResetTapSprites();
 
-        // 【新增】初始隐藏两个子Tap
+        // 初始隐藏两个子Tap
         if (tap1Renderer != null) tap1Renderer.enabled = false;
         if (tap2Renderer != null) tap2Renderer.enabled = false;
     }
@@ -71,11 +74,22 @@ public class Dtap : MonoBehaviour
             InitCommands();
             transform.position = new Vector2(noteData.x, noteData.y);
             isCommandsInitialized = true;
+            // 【删除】原处立即显示的逻辑，改由下方时间控制
+        }
 
-            // 【新增】指令初始化完成，显示两个子Tap
-            if (tap1Renderer != null) tap1Renderer.enabled = true;
-            if (tap2Renderer != null) tap2Renderer.enabled = true;
-            Debug.Log($"[{gameObject.name}] Dtap组件：谱面加载完成，指令初始化完成，显示音符");
+        // 【新增】根据第一个指令的开始时间控制显示
+        if (currentTime < firstCommandStartTime)
+        {
+            // 未到显示时间，确保两个子Tap隐藏，并跳过后续所有逻辑
+            if (tap1Renderer != null) tap1Renderer.enabled = false;
+            if (tap2Renderer != null) tap2Renderer.enabled = false;
+            return;
+        }
+        else
+        {
+            // 到达显示时间，确保子Tap显示
+            if (tap1Renderer != null && !tap1Renderer.enabled) tap1Renderer.enabled = true;
+            if (tap2Renderer != null && !tap2Renderer.enabled) tap2Renderer.enabled = true;
         }
 
         if (hasCompletedJudge)
@@ -121,6 +135,9 @@ public class Dtap : MonoBehaviour
             return;
         }
 
+        // 【新增】记录第一个指令的开始时间
+        firstCommandStartTime = noteData.commands[0].timeA;
+
         Command cmd = noteData.commands[0];
         dropToCommand = new DropToCommand(noteData, cmd, cmd.key_name);
 
@@ -129,9 +146,9 @@ public class Dtap : MonoBehaviour
             shiftCommands.Add(new ShiftCommand(noteData, cmd));
         }
 
-        if (!string.IsNullOrEmpty(cmd.filename))
+        if (!string.IsNullOrEmpty(cmd.json_filename))
         {
-            moveCommands.Add(new MoveCommand(noteData, cmd.filename));
+            moveCommands.Add(new MoveCommand(noteData, cmd));
         }
 
         if (dropToCommand == null)

@@ -13,7 +13,7 @@ public class KeyCommand
     public float y1;          // 起始y坐标
     public float x2;          // 目标x坐标
     public float y2;          // 目标y坐标
-    public string filename;   // Move指令的.json文件名
+    public string json_filename;   // Move指令的.json文件名
     public string cmdType;    
 }
 
@@ -37,7 +37,8 @@ public class Command
     public float x2;           
     public float y2;           
     public int key_name;        
-    public string filename;     
+    public string json_filename;
+    public float hold_duration;    
     public string commandName; 
     public bool isNoteFirstTimeOccured; 
 }

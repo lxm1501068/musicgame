@@ -11,7 +11,7 @@ public class Flick : MonoBehaviour
     [Header("判定对应的精灵图片")]
     public Sprite defaultFlickSprite;
     public Sprite perfectFlickSprite;
-    public Sprite missFlickSprite;   // 注意：已移除 good/bad 精灵
+    public Sprite missFlickSprite;
 
     [Header("销毁设置")]
     public float destroyDelay = 0.2f;

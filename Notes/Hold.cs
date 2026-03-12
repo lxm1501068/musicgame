@@ -10,9 +10,10 @@ public class Hold : MonoBehaviour
     private SpriteRenderer rectanglePart;
     private SpriteRenderer rightSemiCircle;
     private Transform rectangleTransform;
-    private ShiftCommand shiftCommand;
+    private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
     private DropToCommand dropToCommand;
-    private MoveCommand moveCommand;
+    private List<MoveCommand> moveCommands = new List<MoveCommand>();
+    private float holdDuration;
     #endregion
 
     #region Hold特有配置
@@ -34,17 +35,20 @@ public class Hold : MonoBehaviour
     public Sprite rectangleGood;
     public Sprite rectangleBad;
     public Sprite rectangleMiss;
-    public float initialRectangleLength = 2.0f;
+
+    // 新增：胶囊方向与长度（由drop_to指令决定）
+    private Vector2 holdDirection = Vector2.right;
+    private float totalHoldLength = 2.0f;          // 初始总长度（起始点到终点距离）
+    private float currentRectangleLength;           // 当前矩形长度（随时间缩短）
 
     private bool isHoldStarted = false;
     private bool isHoldCompleted = false;
     private float lastPressTime = 0;
     private float holdStartTime = 0;
-    private float currentRectangleLength;
-    private float holdDuration = 0f;
-    private bool isJudgmentSwitched = false;
+    private bool isJudgmentSwitched = false;        // 若希望每次判定都更新精灵，可移除该标志
     
     private bool isCommandsInitialized = false;
+    private float firstCommandStartTime;
     #endregion
 
     #region 生命周期
@@ -58,77 +62,92 @@ public class Hold : MonoBehaviour
             return;
         }
 
-        InitializeCapsuleComponents();
-
-        // 【新增】初始隐藏所有子部件
-        if (leftSemiCircle != null) leftSemiCircle.enabled = false;
-        if (rectanglePart != null) rectanglePart.enabled = false;
-        if (rightSemiCircle != null) rightSemiCircle.enabled = false;
-
-        currentRectangleLength = initialRectangleLength;
+        InitializeCapsuleComponents();               // 创建子物体，但初始隐藏
+        HideAllParts();                              // 隐藏所有子部件
+        currentRectangleLength = totalHoldLength;    // 初始长度等于总长
     }
 
     private void Update()
     {
         if (GameManager.Instance == null) return;
-        
         float currentPlayTime = GameManager.Instance.CurrentPlayTime;
         if (currentPlayTime == -1) return;
 
         if (!isCommandsInitialized)
         {
             InitCommands();
-            transform.position = new Vector2(noteData.x, noteData.y);
+            Debug.Log($"Hold音符{noteData.NoteIndex}指令初始化完成，firstCommandStartTime={firstCommandStartTime}");
+            transform.position = new Vector2(noteData.x, noteData.y); // 左半圆圆心
             isCommandsInitialized = true;
-
-            // 【新增】指令初始化完成，显示所有子部件
-            if (leftSemiCircle != null) leftSemiCircle.enabled = true;
-            if (rectanglePart != null) rectanglePart.enabled = true;
-            if (rightSemiCircle != null) rightSemiCircle.enabled = true;
-            Debug.Log($"[{noteData.NoteIndex}] Hold组件：谱面加载完成，指令初始化完成，显示音符");
             return;
         }
 
-        if (noteData == null || !noteData.isVisible) return;
-
+        // 根据第一个指令的开始时间控制显示
+        if (currentPlayTime < firstCommandStartTime)
+        {
+            HideAllParts();
+            return;
+        }
+        else
+        {
+            ShowAllParts();
+        }
+        // 更新左半圆圆心位置（由指令驱动）
         UpdateNotePosition(currentPlayTime, Time.deltaTime);
+        // 更新胶囊视觉（根据当前剩余长度和方向）
+        UpdateCapsuleVisual(currentRectangleLength);
+        // 判定逻辑
         UpdateHoldJudge(currentPlayTime);
     }
 
     private void OnDestroy()
     {
-        shiftCommand = null;
+        shiftCommands.Clear();
+        moveCommands.Clear();
+        shiftCommands = null;
+        moveCommands = null;
         dropToCommand = null;
-        moveCommand = null;
     }
     #endregion
 
-    #region 指令初始化（修改点：使用不区分大小写的前缀匹配）
+    #region 指令初始化
     private void InitCommands()
     {
         if (noteData.commands == null || noteData.commands.Count == 0) return;
+
+        firstCommandStartTime = noteData.commands[0].timeA;
 
         foreach (var cmd in noteData.commands)
         {
             string cmdName = cmd.commandName?.ToLower() ?? "";
 
-            // DropTo 指令（可能带有额外参数，如 "drop_to 3"）
             if (cmdName.StartsWith("drop_to"))
             {
                 dropToCommand = new DropToCommand(noteData, cmd, cmd.key_name);
                 dropToCommand.perfectThreshold = 0.15f;
                 dropToCommand.goodThreshold = 0.25f;
                 dropToCommand.badThreshold = 0.35f;
+                holdDuration = cmd.hold_duration;
+
+                // 从drop_to指令计算方向与总长度
+                Vector2 start = new Vector2(cmd.x1, cmd.y1);
+                Vector2 end = new Vector2(cmd.x2, cmd.y2);
+                holdDirection = (end - start).normalized;
+                totalHoldLength = Vector2.Distance(start, end);
+                currentRectangleLength = totalHoldLength;   // 初始化为总长
+
+                // 将drop_to也加入移动列表，确保其位移被执行
+                shiftCommands.Add(dropToCommand);
             }
-            // Shift 指令（若将来使用）
             else if (cmdName == "shift")
             {
-                shiftCommand = new ShiftCommand(noteData, cmd);
+                var shiftCmd = new ShiftCommand(noteData, cmd);
+                shiftCommands.Add(shiftCmd);
             }
-            // Move 指令
-            else if (cmdName == "move" && !string.IsNullOrEmpty(cmd.filename))
+            else if (cmdName == "move" && !string.IsNullOrEmpty(cmd.json_filename))
             {
-                moveCommand = new MoveCommand(noteData, cmd.filename);
+                var moveCmd = new MoveCommand(noteData, cmd);
+                moveCommands.Add(moveCmd);
             }
         }
 
@@ -140,11 +159,12 @@ public class Hold : MonoBehaviour
     #region 位置更新
     private void UpdateNotePosition(float currentTime, float deltaTime)
     {
-        if (moveCommand != null)
-            moveCommand.UpdateNotePosition(currentTime);
-        else if (shiftCommand != null)
-            shiftCommand.UpdateNotePosition(currentTime, deltaTime);
+        foreach (var moveCmd in moveCommands)
+            moveCmd.UpdateNotePosition(currentTime);
+        foreach (var shiftCmd in shiftCommands)
+            shiftCmd.UpdateNotePosition(currentTime, deltaTime);
 
+        // 左半圆圆心 = 更新后的noteData坐标
         transform.position = new Vector3(noteData.x, noteData.y, transform.position.z);
     }
     #endregion
@@ -156,7 +176,7 @@ public class Hold : MonoBehaviour
 
         if (!isHoldStarted)
         {
-            dropToCommand.Judge(currentTime, noteData.commands[0].key_name);
+            dropToCommand.Judge(currentTime, dropToCommand.KeyIndex); // 使用自身KeyIndex
             var judgeResult = dropToCommand.judgeResult;
 
             if (judgeResult != JudgeResult.None && judgeResult != JudgeResult.Miss)
@@ -179,9 +199,9 @@ public class Hold : MonoBehaviour
 
         if (isHoldStarted && !isHoldCompleted)
         {
-            bool isKeyPressed = InputManager.Instance.IsGroupPressed(noteData.commands[0].key_name);
+            bool isKeyPressed = InputManager.Instance.IsGroupPressed(dropToCommand.KeyIndex);
             holdDuration = currentTime - holdStartTime;
-            float expectedHoldEndTime = dropToCommand.endTime + (noteData.commands[0].timeB - noteData.commands[0].timeA);
+            float expectedHoldEndTime = dropToCommand.endTime; // 修正：直接使用dropTo的结束时间
             float totalHoldTime = expectedHoldEndTime - holdStartTime;
 
             if (isKeyPressed)
@@ -190,13 +210,14 @@ public class Hold : MonoBehaviour
             if (dropToCommand.judgeResult != JudgeResult.Miss && totalHoldTime > 0)
             {
                 float holdProgress = Mathf.Clamp01(holdDuration / totalHoldTime);
-                currentRectangleLength = Mathf.Lerp(initialRectangleLength, 0, holdProgress);
-                UpdateCapsuleScale(currentRectangleLength);
+                currentRectangleLength = Mathf.Lerp(totalHoldLength, 0, holdProgress);
+                // 视觉更新已在Update中调用，此处不再重复
             }
 
+            // 中断判定
             if (currentTime - lastPressTime > holdTolerance)
             {
-                dropToCommand.judgeResult = holdDuration < (expectedHoldEndTime - dropToCommand.endTime) * 0.5f 
+                dropToCommand.judgeResult = holdDuration < (expectedHoldEndTime - dropToCommand.startTime) * 0.5f 
                     ? JudgeResult.Miss 
                     : JudgeResult.Bad;
                 
@@ -208,10 +229,10 @@ public class Hold : MonoBehaviour
                 return;
             }
 
+            // 完成判定
             if (currentTime >= expectedHoldEndTime - holdCompleteThreshold)
             {
                 currentRectangleLength = 0;
-                UpdateCapsuleScale(currentRectangleLength);
                 isHoldCompleted = true;
                 noteData.isVisible = false;
                 gameObject.SetActive(false);
@@ -224,8 +245,7 @@ public class Hold : MonoBehaviour
     #region 视觉效果处理
     private void SwitchJudgeSprite(JudgeResult judgeResult)
     {
-        if (isJudgmentSwitched) return;
-        
+        // 若希望每次判定都更新精灵，可移除 isJudgmentSwitched 判断
         Sprite semiSprite = judgeResult switch
         {
             JudgeResult.Perfect => semiCirclePerfect,
@@ -247,21 +267,19 @@ public class Hold : MonoBehaviour
             _ => rectangleDefault
         };
 
+        // 可选：添加空值检查
         if (leftSemiCircle.sprite == null)
             Debug.LogWarning($"Hold音符{noteData.NoteIndex} 半圆 {judgeResult} 精灵未赋值！");
         if (rectanglePart.sprite == null)
             Debug.LogWarning($"Hold音符{noteData.NoteIndex} 矩形 {judgeResult} 精灵未赋值！");
 
-        isJudgmentSwitched = true;
         Debug.Log($"Hold音符{noteData.NoteIndex}切换精灵为：{judgeResult}");
     }
 
     private void InitializeCapsuleComponents()
     {
+        // 左半圆
         Transform leftChild = transform.Find("LeftSemiCircle");
-        Transform rectChild = transform.Find("Rectangle");
-        Transform rightChild = transform.Find("RightSemiCircle");
-
         if (leftChild == null)
         {
             GameObject leftObj = new GameObject("LeftSemiCircle");
@@ -271,9 +289,10 @@ public class Hold : MonoBehaviour
         leftSemiCircle = leftChild.GetComponent<SpriteRenderer>();
         if (leftSemiCircle == null)
             leftSemiCircle = leftChild.gameObject.AddComponent<SpriteRenderer>();
-        if (semiCircleDefault != null)
-            leftSemiCircle.sprite = semiCircleDefault;
+        leftSemiCircle.sprite = semiCircleDefault;
 
+        // 矩形
+        Transform rectChild = transform.Find("Rectangle");
         if (rectChild == null)
         {
             GameObject rectObj = new GameObject("Rectangle");
@@ -284,9 +303,10 @@ public class Hold : MonoBehaviour
         if (rectanglePart == null)
             rectanglePart = rectChild.gameObject.AddComponent<SpriteRenderer>();
         rectangleTransform = rectChild;
-        if (rectangleDefault != null)
-            rectanglePart.sprite = rectangleDefault;
+        rectanglePart.sprite = rectangleDefault;
 
+        // 右半圆
+        Transform rightChild = transform.Find("RightSemiCircle");
         if (rightChild == null)
         {
             GameObject rightObj = new GameObject("RightSemiCircle");
@@ -296,20 +316,47 @@ public class Hold : MonoBehaviour
         rightSemiCircle = rightChild.GetComponent<SpriteRenderer>();
         if (rightSemiCircle == null)
             rightSemiCircle = rightChild.gameObject.AddComponent<SpriteRenderer>();
-        if (semiCircleDefault != null)
-            rightSemiCircle.sprite = semiCircleDefault;
+        rightSemiCircle.sprite = semiCircleDefault;
 
-        UpdateCapsuleScale(initialRectangleLength);
-        Debug.Log($"Hold音符{noteData.NoteIndex}胶囊形子部件初始化完成");
+        // 初始隐藏
+        HideAllParts();
     }
 
-    private void UpdateCapsuleScale(float rectangleLength)
+    private void UpdateCapsuleVisual(float currentLength)
     {
         if (rectangleTransform == null) return;
 
-        float scaleRatio = initialRectangleLength > 0 ? rectangleLength / initialRectangleLength : 0;
-        rectangleTransform.localScale = new Vector3(scaleRatio, 1f, 1f);
-        Debug.Log($"Hold音符{noteData.NoteIndex}矩形长度更新为：{rectangleLength:F3}，缩放比例：{scaleRatio:F3}");
+        // 限制最小长度（避免缩放为0时出现异常）
+        currentLength = Mathf.Max(currentLength, 0.01f);
+
+        // 1. 矩形：中心位置 = 左半圆圆心 + direction * (currentLength/2)
+        rectangleTransform.position = (Vector2)transform.position + holdDirection * (currentLength * 0.5f);
+        // 矩形旋转：使X轴指向direction
+        rectangleTransform.rotation = Quaternion.FromToRotation(Vector3.right, holdDirection);
+        // 矩形缩放：假设原始宽度为1，则X缩放 = currentLength
+        rectangleTransform.localScale = new Vector3(currentLength, 1f, 1f);
+
+        // 2. 右半圆：位置 = 左半圆圆心 + direction * currentLength
+        rightSemiCircle.transform.position = (Vector2)transform.position + holdDirection * currentLength;
+        // 右半圆旋转：使其开口指向 -direction（朝向矩形）
+        rightSemiCircle.transform.rotation = Quaternion.FromToRotation(Vector3.right, -holdDirection);
+
+        // 3. 左半圆：位置就是transform.position，旋转使其开口指向 direction
+        leftSemiCircle.transform.rotation = Quaternion.FromToRotation(Vector3.right, holdDirection);
+    }
+
+    private void HideAllParts()
+    {
+        if (leftSemiCircle != null) leftSemiCircle.enabled = false;
+        if (rectanglePart != null) rectanglePart.enabled = false;
+        if (rightSemiCircle != null) rightSemiCircle.enabled = false;
+    }
+
+    private void ShowAllParts()
+    {
+        if (leftSemiCircle != null && !leftSemiCircle.enabled) leftSemiCircle.enabled = true;
+        if (rectanglePart != null && !rectanglePart.enabled) rectanglePart.enabled = true;
+        if (rightSemiCircle != null && !rightSemiCircle.enabled) rightSemiCircle.enabled = true;
     }
     #endregion
 

@@ -122,8 +122,8 @@ public class Key_move : MonoBehaviour
                     _shiftCommands.Add(new KeyShiftCommand(this, keyCmd));
                     break;
                 case "move":
-                    if (!string.IsNullOrEmpty(keyCmd.filename))
-                        _moveCommands.Add(new KeyMoveCommand(this, keyCmd.filename));
+                    if (!string.IsNullOrEmpty(keyCmd.json_filename))
+                        _moveCommands.Add(new KeyMoveCommand(this, keyCmd.json_filename));
                     break;
             }
         }

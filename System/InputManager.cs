@@ -209,9 +209,9 @@ public class InputManager : MonoBehaviour
     /// <returns>如果有按键被按下返回true，否则false</returns>
     public bool IsGroupPressed(int groupNumber)
     {
-        if (groupNumber >= 1 && groupNumber <= keyGroups.Count)
+        if (groupNumber >= 0 && groupNumber < keyGroups.Count)
         {
-            int groupIndex = groupNumber - 1;
+            int groupIndex = groupNumber;
             var group = keyGroups[groupIndex];
             
             foreach (var keyName in group)
@@ -235,9 +235,9 @@ public class InputManager : MonoBehaviour
     /// <returns>如果有按键被按住返回true，否则false</returns>
     public bool IsGroupHeld(int groupNumber)
     {
-        if (groupNumber >= 1 && groupNumber <= keyGroups.Count)
+        if (groupNumber >= 0 && groupNumber < keyGroups.Count)
         {
-            int groupIndex = groupNumber - 1;
+            int groupIndex = groupNumber;
             var group = keyGroups[groupIndex];
             
             foreach (var keyName in group)
