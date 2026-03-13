@@ -54,7 +54,7 @@ public class ShiftCommand
     public void UpdateNotePosition(float currentTime, float deltaTime)
     {
         if (note == null || currentTime < startTime || currentTime > endTime) return; // 增加开始时间检查
-        //Debug.Log($"[ShiftCommand] 更新位置，currentTime={currentTime}, startTime={startTime}, endTime={endTime}, speed={speed}, direction={direction}");
+        // Debug.Log($"[ShiftCommand] 更新位置，currentTime={currentTime}, startTime={startTime}, endTime={endTime}, speed={speed}, direction={direction}");
         // 计算单帧移动距离
         Vector2 frameMove = direction * speed * deltaTime;
         note.x += frameMove.x;

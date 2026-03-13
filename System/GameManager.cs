@@ -11,6 +11,10 @@ public class GameManager : MonoBehaviour
     public LoadChart chartLoader;   // 谱面加载/解析
     public string initialChartFileName = "chart.txt"; // 初始加载的谱面文件名
 
+    // +++ BGM 新增：背景音乐播放器
+    [Header("BGM 设置")]
+    public AudioSource bgmAudioSource; // 用于播放背景音乐（需在编辑器拖拽赋值）
+
     // 新增：谱面加载解析完成标志位
     public bool IsChartLoadedAndParsed;
 
@@ -94,11 +98,15 @@ public class GameManager : MonoBehaviour
 
     #region 谱面加载&解析（异步版核心逻辑）
     /// <summary>
-    /// 加载并解析谱面（异步版：等待解析完成后再播放）
+    /// 加载并解析谱面（异步版）
     /// </summary>
-    /// <param name="fileName">谱面文件名（如chart.txt）</param>
-    public async void LoadAndParseChart(string fileName)
+    /// <param name="fileName">谱面文件名</param>
+    /// <param name="autoPlay">解析完成后是否自动开始播放</param>
+    public async void LoadAndParseChart(string fileName, bool autoPlay = true)
     {
+        // +++ BGM 新增：加载新谱面前，确保停止任何正在播放的谱面和 BGM
+        StopChart();
+
         // 开始加载时标记为未完成
         IsChartLoadedAndParsed = false;
 
@@ -126,9 +134,13 @@ public class GameManager : MonoBehaviour
             return;
         }
         
-        // 确保加载→解析→音符创建全完成后，再开始播放
-        Debug.Log($"GameManager: 谱面加载&解析完成，开始播放");
-        PlayChart();
+        // 确保加载→解析→音符创建全完成后，再根据autoPlay决定是否开始播放
+        Debug.Log($"GameManager: 谱面加载&解析完成");
+        
+        if (autoPlay)
+        {
+            PlayChart();
+        }
     }
 
     /// <summary>
@@ -203,6 +215,13 @@ public class GameManager : MonoBehaviour
         chartStartTime = Time.time;
         pauseAccumulator = 0; // 清空暂停累计时长
         pausedPlayTime = 0;   // 重置暂停时的播放时间
+
+        // +++ BGM 新增：开始播放 BGM
+        if (bgmAudioSource != null && !bgmAudioSource.isPlaying)
+        {
+            bgmAudioSource.Play();
+        }
+
         Debug.Log("GameManager: 谱面开始播放！");
     }
 
@@ -226,6 +245,12 @@ public class GameManager : MonoBehaviour
             chartStartTime = Time.time - (pausedPlayTime + pauseAccumulator);
             Debug.Log($"GameManager: 谱面恢复播放 | 累计暂停时长：{pauseAccumulator:F2}秒");
 
+            // +++ BGM 新增：恢复 BGM 播放
+            if (bgmAudioSource != null)
+            {
+                bgmAudioSource.UnPause();
+            }
+
             // 恢复播放时隐藏恢复按钮
             if (RecoverButton.Instance != null)
             {
@@ -238,6 +263,12 @@ public class GameManager : MonoBehaviour
             lastPauseTime = Time.time;
             pausedPlayTime = CurrentPlayTime; // 关键：保存暂停时的播放时间
             Debug.Log($"GameManager: 谱面已暂停 | 暂停时播放时间：{pausedPlayTime:F2}秒");
+
+            // +++ BGM 新增：暂停 BGM
+            if (bgmAudioSource != null)
+            {
+                bgmAudioSource.Pause();
+            }
 
             // 暂停时显示恢复按钮
             if (RecoverButton.Instance != null)
@@ -257,6 +288,12 @@ public class GameManager : MonoBehaviour
         pauseAccumulator = 0;
         lastPauseTime = Time.time;
         pausedPlayTime = 0;
+
+        // +++ BGM 新增：停止 BGM 播放
+        if (bgmAudioSource != null)
+        {
+            bgmAudioSource.Stop();
+        }
 
         Debug.Log("GameManager: 谱面已停止，播放状态已重置");
     }
@@ -284,10 +321,12 @@ public class GameManager : MonoBehaviour
             Instance = null;
         }
     }
+    
     private void Update()
     {
         debugCurrentPlayTime = CurrentPlayTime;
-        if(CurrentPlayTime == -1)return; // 加载解析未完成时跳过输入检测
+        if(CurrentPlayTime == -1) return; // 加载解析未完成时跳过输入检测
+        
         // 检测Esc键按下（GetKeyDown确保仅触发一次）+ 当前处于播放状态
         if (Input.GetKeyDown(KeyCode.Escape) && IsPlaying)
         {

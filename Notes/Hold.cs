@@ -13,14 +13,13 @@ public class Hold : MonoBehaviour
     private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
     private DropToCommand dropToCommand;
     private List<MoveCommand> moveCommands = new List<MoveCommand>();
-    private float holdDuration;
+    private float holdDuration;                // 从谱面读取的 hold_duration（总按住时长）
     #endregion
 
     #region Hold特有配置
     [Header("Hold判定配置")]
     public float holdCheckInterval = 0.05f;
-    public float holdTolerance = 0.1f;
-    public float holdCompleteThreshold = 0.1f;
+    public float holdCompleteThreshold = 0.1f; // 提前多少时间视为完成
 
     [Header("Hold视觉配置 - 半圆（左右共用）")]
     public Sprite semiCircleDefault;
@@ -36,19 +35,20 @@ public class Hold : MonoBehaviour
     public Sprite rectangleBad;
     public Sprite rectangleMiss;
 
-    // 新增：胶囊方向与长度（由drop_to指令决定）
+    // 胶囊方向与长度（由drop_to指令决定）
     private Vector2 holdDirection = Vector2.right;
-    private float totalHoldLength = 2.0f;          // 初始总长度（起始点到终点距离）
+    private float totalHoldLength = 2.0f;          // 总长度 = speed * hold_duration
     private float currentRectangleLength;           // 当前矩形长度（随时间缩短）
 
     private bool isHoldStarted = false;
     private bool isHoldCompleted = false;
-    private float lastPressTime = 0;
     private float holdStartTime = 0;
-    private bool isJudgmentSwitched = false;        // 若希望每次判定都更新精灵，可移除该标志
-    
+
     private bool isCommandsInitialized = false;
     private float firstCommandStartTime;
+
+    // 固定终点坐标（头部判定后左半圆固定于此）
+    private Vector2 holdFixedEndPos;
     #endregion
 
     #region 生命周期
@@ -92,10 +92,23 @@ public class Hold : MonoBehaviour
         {
             ShowAllParts();
         }
-        // 更新左半圆圆心位置（由指令驱动）
-        UpdateNotePosition(currentPlayTime, Time.deltaTime);
+
+        // 更新位置：头部判定前由指令驱动，头部判定后固定在终点
+        if (!isHoldStarted)
+        {
+            UpdateNotePosition(currentPlayTime, Time.deltaTime);
+        }
+        else
+        {
+            // 强制固定左半圆在终点
+            noteData.x = holdFixedEndPos.x;
+            noteData.y = holdFixedEndPos.y;
+        }
+        transform.position = new Vector3(noteData.x, noteData.y, transform.position.z);
+
         // 更新胶囊视觉（根据当前剩余长度和方向）
         UpdateCapsuleVisual(currentRectangleLength);
+
         // 判定逻辑
         UpdateHoldJudge(currentPlayTime);
     }
@@ -127,16 +140,21 @@ public class Hold : MonoBehaviour
                 dropToCommand.perfectThreshold = 0.15f;
                 dropToCommand.goodThreshold = 0.25f;
                 dropToCommand.badThreshold = 0.35f;
-                holdDuration = cmd.hold_duration;
+                holdDuration = cmd.hold_duration;                     // 记录按住总时长
 
-                // 从drop_to指令计算方向与总长度
+                // 从drop_to指令计算方向
                 Vector2 start = new Vector2(cmd.x1, cmd.y1);
                 Vector2 end = new Vector2(cmd.x2, cmd.y2);
-                holdDirection = (end - start).normalized;
-                totalHoldLength = Vector2.Distance(start, end);
-                currentRectangleLength = totalHoldLength;   // 初始化为总长
+                holdDirection = -1*(end - start).normalized;
 
-                // 将drop_to也加入移动列表，确保其位移被执行
+                // 总长度 = 速度 * 按住时长
+                totalHoldLength = dropToCommand.speed * holdDuration;
+                currentRectangleLength = totalHoldLength;
+
+                // 记录终点坐标（用于固定左半圆）
+                holdFixedEndPos = end;
+
+                // 将drop_to也加入移动列表，确保其位移在头部判定前被执行
                 shiftCommands.Add(dropToCommand);
             }
             else if (cmdName == "shift")
@@ -159,13 +177,11 @@ public class Hold : MonoBehaviour
     #region 位置更新
     private void UpdateNotePosition(float currentTime, float deltaTime)
     {
+        // 头部判定前才执行指令位移
         foreach (var moveCmd in moveCommands)
             moveCmd.UpdateNotePosition(currentTime);
         foreach (var shiftCmd in shiftCommands)
             shiftCmd.UpdateNotePosition(currentTime, deltaTime);
-
-        // 左半圆圆心 = 更新后的noteData坐标
-        transform.position = new Vector3(noteData.x, noteData.y, transform.position.z);
     }
     #endregion
 
@@ -176,15 +192,18 @@ public class Hold : MonoBehaviour
 
         if (!isHoldStarted)
         {
-            dropToCommand.Judge(currentTime, dropToCommand.KeyIndex); // 使用自身KeyIndex
+            // 头部判定
+            dropToCommand.Judge(currentTime, dropToCommand.KeyIndex);
             var judgeResult = dropToCommand.judgeResult;
 
             if (judgeResult != JudgeResult.None && judgeResult != JudgeResult.Miss)
             {
                 isHoldStarted = true;
                 holdStartTime = currentTime;
-                lastPressTime = currentTime;
                 SwitchJudgeSprite(judgeResult);
+                // 立即将左半圆固定在终点（防止后续指令影响）
+                noteData.x = holdFixedEndPos.x;
+                noteData.y = holdFixedEndPos.y;
                 Debug.Log($"Hold音符{noteData.NoteIndex}开始长按，判定结果：{judgeResult}");
             }
             else if (judgeResult == JudgeResult.Miss)
@@ -199,38 +218,30 @@ public class Hold : MonoBehaviour
 
         if (isHoldStarted && !isHoldCompleted)
         {
-            bool isKeyPressed = InputManager.Instance.IsGroupPressed(dropToCommand.KeyIndex);
-            holdDuration = currentTime - holdStartTime;
-            float expectedHoldEndTime = dropToCommand.endTime; // 修正：直接使用dropTo的结束时间
-            float totalHoldTime = expectedHoldEndTime - holdStartTime;
+            bool isKeyHeld = InputManager.Instance.IsGroupHeld(dropToCommand.KeyIndex);
+            float elapsedHoldTime = currentTime - holdStartTime;
 
-            if (isKeyPressed)
-                lastPressTime = currentTime;
-
-            if (dropToCommand.judgeResult != JudgeResult.Miss && totalHoldTime > 0)
+            // 中断判定：只要松开按键立即判 Miss
+            if (!isKeyHeld)
             {
-                float holdProgress = Mathf.Clamp01(holdDuration / totalHoldTime);
-                currentRectangleLength = Mathf.Lerp(totalHoldLength, 0, holdProgress);
-                // 视觉更新已在Update中调用，此处不再重复
-            }
-
-            // 中断判定
-            if (currentTime - lastPressTime > holdTolerance)
-            {
-                dropToCommand.judgeResult = holdDuration < (expectedHoldEndTime - dropToCommand.startTime) * 0.5f 
-                    ? JudgeResult.Miss 
-                    : JudgeResult.Bad;
-                
-                SwitchJudgeSprite(dropToCommand.judgeResult);
+                dropToCommand.judgeResult = JudgeResult.Miss;
+                SwitchJudgeSprite(JudgeResult.Miss);
                 isHoldCompleted = true;
                 noteData.isVisible = false;
                 gameObject.SetActive(false);
-                Debug.Log($"Hold音符{noteData.NoteIndex}长按中断 → {dropToCommand.judgeResult}");
+                Debug.Log($"Hold音符{noteData.NoteIndex}长按中断 → Miss");
                 return;
             }
 
+            // 正常进度更新
+            if (elapsedHoldTime < holdDuration)
+            {
+                float progress = elapsedHoldTime / holdDuration;
+                currentRectangleLength = Mathf.Lerp(totalHoldLength, 0, progress);
+            }
+
             // 完成判定
-            if (currentTime >= expectedHoldEndTime - holdCompleteThreshold)
+            if (elapsedHoldTime >= holdDuration - holdCompleteThreshold)
             {
                 currentRectangleLength = 0;
                 isHoldCompleted = true;
@@ -245,7 +256,6 @@ public class Hold : MonoBehaviour
     #region 视觉效果处理
     private void SwitchJudgeSprite(JudgeResult judgeResult)
     {
-        // 若希望每次判定都更新精灵，可移除 isJudgmentSwitched 判断
         Sprite semiSprite = judgeResult switch
         {
             JudgeResult.Perfect => semiCirclePerfect,
@@ -267,7 +277,6 @@ public class Hold : MonoBehaviour
             _ => rectangleDefault
         };
 
-        // 可选：添加空值检查
         if (leftSemiCircle.sprite == null)
             Debug.LogWarning($"Hold音符{noteData.NoteIndex} 半圆 {judgeResult} 精灵未赋值！");
         if (rectanglePart.sprite == null)
@@ -290,6 +299,7 @@ public class Hold : MonoBehaviour
         if (leftSemiCircle == null)
             leftSemiCircle = leftChild.gameObject.AddComponent<SpriteRenderer>();
         leftSemiCircle.sprite = semiCircleDefault;
+        leftSemiCircle.sortingOrder = 1;  // 设置图层顺序为1
 
         // 矩形
         Transform rectChild = transform.Find("Rectangle");
@@ -304,6 +314,7 @@ public class Hold : MonoBehaviour
             rectanglePart = rectChild.gameObject.AddComponent<SpriteRenderer>();
         rectangleTransform = rectChild;
         rectanglePart.sprite = rectangleDefault;
+        rectanglePart.sortingOrder = 1;   // 设置图层顺序为1
 
         // 右半圆
         Transform rightChild = transform.Find("RightSemiCircle");
@@ -317,8 +328,8 @@ public class Hold : MonoBehaviour
         if (rightSemiCircle == null)
             rightSemiCircle = rightChild.gameObject.AddComponent<SpriteRenderer>();
         rightSemiCircle.sprite = semiCircleDefault;
+        rightSemiCircle.sortingOrder = 1; // 设置图层顺序为1
 
-        // 初始隐藏
         HideAllParts();
     }
 
@@ -326,22 +337,18 @@ public class Hold : MonoBehaviour
     {
         if (rectangleTransform == null) return;
 
-        // 限制最小长度（避免缩放为0时出现异常）
         currentLength = Mathf.Max(currentLength, 0.01f);
 
-        // 1. 矩形：中心位置 = 左半圆圆心 + direction * (currentLength/2)
+        // 矩形：中心位置 = 左半圆圆心 + direction * (currentLength/2)
         rectangleTransform.position = (Vector2)transform.position + holdDirection * (currentLength * 0.5f);
-        // 矩形旋转：使X轴指向direction
         rectangleTransform.rotation = Quaternion.FromToRotation(Vector3.right, holdDirection);
-        // 矩形缩放：假设原始宽度为1，则X缩放 = currentLength
         rectangleTransform.localScale = new Vector3(currentLength, 1f, 1f);
 
-        // 2. 右半圆：位置 = 左半圆圆心 + direction * currentLength
+        // 右半圆：位置 = 左半圆圆心 + direction * currentLength
         rightSemiCircle.transform.position = (Vector2)transform.position + holdDirection * currentLength;
-        // 右半圆旋转：使其开口指向 -direction（朝向矩形）
         rightSemiCircle.transform.rotation = Quaternion.FromToRotation(Vector3.right, -holdDirection);
 
-        // 3. 左半圆：位置就是transform.position，旋转使其开口指向 direction
+        // 左半圆：旋转使其开口指向 direction
         leftSemiCircle.transform.rotation = Quaternion.FromToRotation(Vector3.right, holdDirection);
     }
 

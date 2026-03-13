@@ -398,9 +398,19 @@ public class LoadChart : MonoBehaviour
         
         if (commandStartIndex == -1)
         {
-            // 兼容无标记行场景：直接从按键初始状态行之后开始解析
-            commandStartIndex = KeyCount;
-            Debug.LogWarning("ParseCommands: 未找到谱面指令标记行，从按键初始状态后开始解析");
+            // 先确定按键初始状态行的起始索引
+            int keyStateStartIndex = 0;
+            for (int i = 0; i < spectrumLines.Count; i++)
+            {
+                if (spectrumLines[i].StartsWith("(key_name x y show)"))
+                {
+                    keyStateStartIndex = i + 1; // 数据行开始
+                    break;
+                }
+            }
+            // 如果没有找到标记行，则 keyStateStartIndex 保持 0
+            commandStartIndex = keyStateStartIndex + KeyCount;
+            Debug.Log($"ParseCommands: 未找到谱面指令标记行，从按键初始状态后开始解析，起始索引={commandStartIndex}");
         }
         
         for (int i = commandStartIndex; i < spectrumLines.Count; i++)
