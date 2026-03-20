@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Networking;
 
-// 轨道按键示例注释保留（仅作参考）
+// 轨道按键示例注释行（可用按键名，音符数，指令数，总时长）
 // 0,1,2,3
 // 6
 // 11
@@ -19,19 +19,19 @@ using UnityEngine.Networking;
 // 2 3 -3 1
 // 3 2 -2 1
 
-// 谱面示例注释保留（仅作参考）
+// 谱面示例注释行（#：记分音符，!：不计分音符，%：非音符首次出现，$：按键指令）(note num command time_a time_b x1 y1 x2 y2 (.json file or hold_duration))
 // 谱面
 // # tap 1 drop_to 0 14.000 16.000 4 -4 5 -5
 // ! tap 2 drift 14.000 16.000 4 -4 5 -5
 // % tap 2 destroy 16.000
-// # tap 3 move 14.000 16.000 move_1.json
+// # tap 3 move 14.000 16.000 move_1
 // # hold 4 drop_to 1 18.000 20.000 4 -4 5 -5 3
 // # dtap 5 drop_to 0 20.000 22.000 4 -4 5 -5
-// # flick 6 22.000 24.000   // 简化后的 Flick 格式
+// # flick 6 22.000 24.000
 // $ key 0 hide 24.000
 // $ key 1 drift 24.000 26.000 4 -4 3 -3
 // $ key 0 show 26.000
-// $ key 2 move 26.000 28.000 move_2.json
+// $ key 2 move 26.000 28.000 move_2
 
 public class LoadChart : MonoBehaviour
 {

@@ -15,7 +15,7 @@ public class GroupUI : MonoBehaviour
     public void SetGroupIndex(int index)
     {
         groupIndex = index;
-        groupNameText.text = "Group " + (index + 1);
+        groupNameText.text = "Group " + (index);
         Debug.Log(groupNameText.text);
     }
 

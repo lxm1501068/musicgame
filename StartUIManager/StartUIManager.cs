@@ -27,9 +27,11 @@ public class StartUIManager : MonoBehaviour
     [SerializeField] private string settingsSceneName = "SettingsScene";  // 设置场景名
     [SerializeField] private string createSceneName = "CreateScene";      // 制作谱面场景名
     
-    // 新增警告对象
     [Header("警告")]
     [SerializeField] private GameObject warningPanel;    // 警告面板
+
+    // 静态标志，记录是否已经显示过开场动画（同一游戏会话内有效）
+    private static bool hasShownIntro = false;
 
     private void Start()
     {
@@ -53,7 +55,6 @@ public class StartUIManager : MonoBehaviour
         if (buttonPanel != null)
             buttonPanel.SetActive(false);
 
-        // 新增：隐藏警告面板
         if (warningPanel != null)
             warningPanel.SetActive(false);
             
@@ -82,20 +83,27 @@ public class StartUIManager : MonoBehaviour
             bgmAudioSource.Play();
         }
         
-        // 显示工作室图标2.5秒
-        if (studioLogo != null)
+        // 如果没有显示过开场动画，则显示工作室图标和警告面板
+        if (!hasShownIntro)
         {
-            studioLogo.SetActive(true);
-            yield return new WaitForSeconds(2.5f);
-            studioLogo.SetActive(false);
-        }
+            // 显示工作室图标2.5秒
+            if (studioLogo != null)
+            {
+                studioLogo.SetActive(true);
+                yield return new WaitForSeconds(2.5f);
+                studioLogo.SetActive(false);
+            }
 
-        // 新增：显示警告面板2.5秒
-        if (warningPanel != null)
-        {
-            warningPanel.SetActive(true);
-            yield return new WaitForSeconds(2.5f);
-            warningPanel.SetActive(false);
+            // 显示警告面板2.5秒
+            if (warningPanel != null)
+            {
+                warningPanel.SetActive(true);
+                yield return new WaitForSeconds(2.5f);
+                warningPanel.SetActive(false);
+            }
+
+            // 标记已经显示过，后续返回本场景不再重复显示
+            hasShownIntro = true;
         }
         
         // 显示游戏名称
