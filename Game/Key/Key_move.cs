@@ -74,7 +74,7 @@ public class Key_move : MonoBehaviour
             return;
         }
 
-        // 初始化组件和视觉状态
+        // 初始化组件 and 视觉状态
         _spriteRenderer.sprite = defaultKeySprite;
         gameObject.SetActive(isVisible);
 
@@ -118,7 +118,7 @@ public class Key_move : MonoBehaviour
         {
             switch (keyCmd.cmdType?.ToLower())
             {
-                case "drift":
+                case "shift":
                     _shiftCommands.Add(new KeyShiftCommand(this, keyCmd));
                     break;
                 case "move":

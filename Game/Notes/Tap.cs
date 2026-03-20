@@ -144,7 +144,7 @@ public class Tap : MonoBehaviour
 
         // 如果没有找到 DropTo，可能需要报错
         if (dropToCommand == null)
-            Debug.LogWarning($"[{gameObject.name}] 未找到 DropTo 指令！");
+            Debug.LogWarning($"[{gameObject.name}] 未找到 Drop To 指令！");
     }
 
     private void ExecuteCommands(float currentTime)

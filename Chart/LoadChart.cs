@@ -22,14 +22,14 @@ using UnityEngine.Networking;
 // 谱面示例注释行（#：记分音符，!：不计分音符，%：非音符首次出现，$：按键指令）(note num command time_a time_b x1 y1 x2 y2 (.json file or hold_duration))
 // 谱面
 // # tap 1 drop_to 0 14.000 16.000 4 -4 5 -5
-// ! tap 2 drift 14.000 16.000 4 -4 5 -5
+// ! tap 2 shift 14.000 16.000 4 -4 5 -5
 // % tap 2 destroy 16.000
 // # tap 3 move 14.000 16.000 move_1
 // # hold 4 drop_to 1 18.000 20.000 4 -4 5 -5 3
 // # dtap 5 drop_to 0 20.000 22.000 4 -4 5 -5
 // # flick 6 22.000 24.000
 // $ key 0 hide 24.000
-// $ key 1 drift 24.000 26.000 4 -4 3 -3
+// $ key 1 shift 24.000 26.000 4 -4 3 -3
 // $ key 0 show 26.000
 // $ key 2 move 26.000 28.000 move_2
 
@@ -312,8 +312,8 @@ public class LoadChart : MonoBehaviour
         ChartData.Instance.ResetChartData();
         // 赋值轨道按键列表+数量到ChartData
         ChartData.Instance.keyIds = this.KeyIds;
-        ChartData.Instance.keyCount = this.KeyCount;
-        ChartData.Instance.noteCount = noteCount;
+        // ChartData.Instance.keyCount = this.KeyCount; // keyCount 是属性，无需赋值
+        // ChartData.Instance.noteCount = noteCount;     // noteCount 是属性，无需赋值
         ChartData.Instance.totalDuration = totalDuration;
         
         // 使用本地缓存的谱面行解析
@@ -512,7 +512,7 @@ public class LoadChart : MonoBehaviour
             else
             {
                 // 原有逻辑：根据 cmd (parts[3]) 解析其他音符类型
-                cmd = parts[3];  // 指令类型，如 drop_to, drift, move, destroy 等
+                cmd = parts[3];  // 指令类型，如 drop_to, shift, move, destroy 等
 
                 switch (cmd)
                 {
@@ -555,7 +555,7 @@ public class LoadChart : MonoBehaviour
                             float.TryParse(parts[11], NumberStyles.Float, CultureInfo.InvariantCulture, out hold_duration);
                         }
                         break;
-                    case "drift":
+                    case "shift":
                         if (parts.Length >= 6)
                         {
                             float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
@@ -649,7 +649,7 @@ public class LoadChart : MonoBehaviour
                         endTime = startTime; // 隐藏/显示无结束时间，默认和开始时间一致
                     }
                     break;
-                case "drift":
+                case "shift":
                     if (parts.Length >= 6)
                     {
                         float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out startTime);

@@ -14,13 +14,33 @@ public class CreateSceneManager : MonoBehaviour
         Note
     }
 
-    [Header("UI References")]
-    public TMP_InputField timeInputField;          // 用于编辑选中音符的时间
-    public TMP_Dropdown noteTypeDropdown;          // 用于选择要放置的音符类型（不再用于编辑）
-    public TMP_InputField noteTypeInputField;      // 新增：用于编辑选中音符的类型（文本输入）
+    [Header("Placement Settings")]
+    public TMP_Dropdown noteTypeDropdown;          // 用于选择要放置的音符类型
+    public TMP_InputField timeInputField;          // 用于编辑放置时间/选中音符的判定时间
+
+    [Header("Note Editor")]
+    public TMP_InputField noteTypeInputField;      // 用于编辑选中音符的类型（文本输入）
     public TMP_InputField keyIndexInputField;      // 用于编辑音符的 key_name (仅当指令为 drop_to 时有效)
+    
+    [Header("Command Management")]
+    public Button cmdModeToggleBtn;                // 切换 Add/Delete 模式的按钮
+    public TMP_Dropdown cmdDropdown;               // 指令列表（Add 时为可选类型，Delete 时为已有指令）
+    public TMP_InputField cmdInputField;           // Add 模式下的输入框
+    public Button cmdConfirmBtn;                   // 执行 Add/Delete 的确认按钮
+
+    [Header("Key Editor")]
     public TMP_InputField keyNameInputField;       // 用于编辑按键的 keyName (仅选中按键时显示)
+
+    [Header("Chart Settings")]
+    public Button settingsButton;                  // 打开/关闭设置面板的按钮
+    public GameObject settingsPanel;               // 设置面板（默认隐藏）
+    public TMP_InputField totalDurationInput;      // 总时长输入框
+    public TMP_InputField keyIdsInput;             // KeyIds 输入框（逗号分隔整数）
+    public Button confirmSettingsButton;           // 确认设置按钮
+
+    [Header("General UI & Info")]
     public TextMeshProUGUI infoText;               // 显示选中对象信息
+    public Camera mainCamera;
 
     [Header("Prefabs")]
     public GameObject notePrefab;
@@ -36,14 +56,6 @@ public class CreateSceneManager : MonoBehaviour
 
     [Header("Settings")]
     public float planeZ = 0f;
-    public Camera mainCamera;
-
-    [Header("Chart Settings UI")]                  // 新增：谱面设置 UI
-    public Button settingsButton;                  // 打开/关闭设置面板的按钮
-    public GameObject settingsPanel;               // 设置面板（默认隐藏）
-    public TMP_InputField totalDurationInput;      // 总时长输入框
-    public TMP_InputField keyIdsInput;             // KeyIds 输入框（逗号分隔整数）
-    public Button confirmSettingsButton;           // 确认设置按钮
 
     // 放置模式相关
     private bool isPlacing = false;
@@ -57,6 +69,9 @@ public class CreateSceneManager : MonoBehaviour
     private SelectedType selectedType = SelectedType.None;
     private Command selectedCommand;    // 当选中音符时
     private KeyData selectedKeyData;    // 当选中按键时
+
+    // 指令管理状态
+    private bool isAddMode = true; // 默认 Add 模式
 
     void Start()
     {
@@ -73,12 +88,25 @@ public class CreateSceneManager : MonoBehaviour
         keyIndexInputField.gameObject.SetActive(false);
         keyNameInputField.gameObject.SetActive(false);
         noteTypeInputField.gameObject.SetActive(false);
+        
+        // 初始隐藏指令管理相关
+        if (cmdModeToggleBtn != null) cmdModeToggleBtn.gameObject.SetActive(false);
+        if (cmdDropdown != null) cmdDropdown.gameObject.SetActive(false);
+        if (cmdInputField != null) cmdInputField.gameObject.SetActive(false);
+        if (cmdConfirmBtn != null) cmdConfirmBtn.gameObject.SetActive(false);
 
         if (mainCamera == null) mainCamera = Camera.main;
 
         // 初始化下拉选项
         noteTypeDropdown.ClearOptions();
-        noteTypeDropdown.AddOptions(new List<string> { "Tap", "Hold", "DTap", "Flick", "Drag", "Key" });
+        noteTypeDropdown.AddOptions(new List<string> { "(empty)", "Tap", "Hold", "DTap", "Flick", "Key", "Drag" });
+
+        // ---------- 初始化指令管理 UI ----------
+        if (cmdModeToggleBtn != null)
+            cmdModeToggleBtn.onClick.AddListener(ToggleCmdMode);
+
+        if (cmdConfirmBtn != null)
+            cmdConfirmBtn.onClick.AddListener(OnConfirmCmdAction);
 
         // ---------- 初始化谱面设置 UI ----------
         if (settingsButton != null)
@@ -93,45 +121,61 @@ public class CreateSceneManager : MonoBehaviour
 
         // 从 ChartData 加载当前设置值到输入框
         LoadChartSettingsToUI();
+
+        // 新增：加载已有的音符和按键对象
+        SpawnExistingObjects();
     }
 
     void Update()
     {
-        // 放置模式逻辑
-        if (isPlacing && followObject != null)
+        // 新增：快捷键删除 (仅当没有输入框获得焦点时)
+        if (Input.GetKeyDown(KeyCode.Delete) && 
+            (EventSystem.current.currentSelectedGameObject == null || 
+             EventSystem.current.currentSelectedGameObject.GetComponent<TMP_InputField>() == null))
         {
-            Vector3 mousePos = Input.mousePosition;
-            mousePos.z = mainCamera.WorldToScreenPoint(new Vector3(0, 0, planeZ)).z;
-            Vector3 worldPos = mainCamera.ScreenToWorldPoint(mousePos);
-            worldPos.z = planeZ;
-            followObject.transform.position = worldPos;
+            DeleteSelected();
+        }
 
-            // 左键放置（非UI区域）
-            if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
+        // 优先处理放置模式逻辑
+        if (isPlacing)
+        {
+            if (followObject != null)
             {
-                if (currentMode == PlaceMode.Note)
+                Vector3 mousePos = Input.mousePosition;
+                mousePos.z = mainCamera.WorldToScreenPoint(new Vector3(0, 0, planeZ)).z;
+                Vector3 worldPos = mainCamera.ScreenToWorldPoint(mousePos);
+                worldPos.z = planeZ;
+                followObject.transform.position = worldPos;
+
+                // 动态更新预览精灵（处理 Ctrl 键切换 KeyObject/NoteObject）
+                UpdateFollowObjectSprite();
+
+                // 左键放置（非UI区域）
+                if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
                 {
-                    // Ctrl+左键放置按键，否则放置音符
-                    if (currentNoteType == NoteType.Key && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)))
+                    if (currentMode == PlaceMode.Note)
                     {
-                        PlaceKeyObject(worldPos);
-                    }
-                    else
-                    {
-                        PlaceNote(worldPos);
+                        // Ctrl+左键放置按键，否则放置音符
+                        if (currentNoteType == NoteType.Key && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)))
+                        {
+                            PlaceKeyObject(worldPos);
+                        }
+                        else
+                        {
+                            PlaceNote(worldPos);
+                        }
                     }
                 }
             }
 
-            // 右键退出放置模式（销毁跟随物体）
+            // 右键退出放置模式（无论跟随物体是否存在）
             if (Input.GetMouseButtonDown(1) && !EventSystem.current.IsPointerOverGameObject())
             {
                 ExitPlaceMode();
             }
         }
-
-        // 点击选择逻辑（使用2D射线检测）
-        if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
+        // 点击选择逻辑（仅在非放置模式或未点击UI时）
+        else if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
         {
             Vector2 mousePos = mainCamera.ScreenToWorldPoint(Input.mousePosition);
             RaycastHit2D hit = Physics2D.Raycast(mousePos, Vector2.zero);
@@ -166,7 +210,7 @@ public class CreateSceneManager : MonoBehaviour
     // ---------- 放置方法 ----------
     void PlaceNote(Vector3 worldPos)
     {
-        if (!float.TryParse(timeInputField.text, NumberStyles.Float, CultureInfo.InvariantCulture, out float timeA))
+        if (!float.TryParse(timeInputField.text, NumberStyles.Float, CultureInfo.InvariantCulture, out float chartTime))
         {
             infoText.text = "请输入有效的时间";
             return;
@@ -176,7 +220,8 @@ public class CreateSceneManager : MonoBehaviour
         {
             type = currentNoteType,
             num = GenerateNoteNumber(),
-            timeA = timeA,
+            timeB = chartTime,             // 使用输入框中的时间作为判定时间 (timeB)
+            timeA = chartTime - 1f,        // 默认开始时间 (timeA) 为判定时间前 1s
             x1 = worldPos.x,
             y1 = worldPos.y,
             x2 = worldPos.x,
@@ -191,23 +236,33 @@ public class CreateSceneManager : MonoBehaviour
         ChartData.Instance.AddNoteData(newCmd);
         ChartData.Instance.SortCommandsByTime();
 
+        SpawnNoteObject(newCmd);
+
+        infoText.text = $"已放置 {currentNoteType} 音符，编号 {newCmd.num}，时间 {chartTime:F2}s";
+    }
+
+    void SpawnNoteObject(Command cmd)
+    {
+        Vector3 worldPos = new Vector3(cmd.x1, cmd.y1, planeZ);
         GameObject noteObj = Instantiate(notePrefab, worldPos, Quaternion.identity);
         NoteObject noteComp = noteObj.AddComponent<NoteObject>();
-        noteComp.command = newCmd;
+        noteComp.command = cmd;
 
         SpriteRenderer sr = noteObj.GetComponent<SpriteRenderer>();
         if (sr != null)
         {
-            int idx = GetNoteTypeIndex(currentNoteType);
-            if (idx >= 0) sr.sprite = noteSprites[idx];
+            int idx = GetNoteTypeIndex(cmd.type);
+            if (idx >= 0 && idx < noteSprites.Length) sr.sprite = noteSprites[idx];
         }
-
-        infoText.text = $"已放置 {currentNoteType} 音符，编号 {newCmd.num}，时间 {timeA}s";
     }
 
     void PlaceKeyObject(Vector3 worldPos)
     {
-        int keyId = 1; // 固定 Key ID，可根据需要修改
+        int keyId = 1; // 默认起始 ID
+        if (ChartData.Instance.keyDatas.Count > 0)
+        {
+            keyId = ChartData.Instance.keyDatas.Max(k => k.keyName) + 1;
+        }
 
         if (ChartData.Instance.keyDatas.Any(k => k.keyName == keyId))
         {
@@ -218,15 +273,21 @@ public class CreateSceneManager : MonoBehaviour
         KeyData newKey = new KeyData(keyId, worldPos.x, worldPos.y, 1);
         ChartData.Instance.keyDatas.Add(newKey);
 
-        GameObject keyObj = Instantiate(keyPrefab, worldPos, Quaternion.identity);
-        KeyObject keyComp = keyObj.AddComponent<KeyObject>();
-        keyComp.keyData = newKey;
-
-        SpriteRenderer sr = keyObj.GetComponent<SpriteRenderer>();
-        if (sr != null && keyId >= 1 && keyId <= keySprites.Length)
-            sr.sprite = keySprites[keyId - 1];
+        SpawnKeyObject(newKey);
 
         infoText.text = $"已放置按键 Key ID {keyId}，位置 ({worldPos.x:F2}, {worldPos.y:F2})";
+    }
+
+    void SpawnKeyObject(KeyData keyData)
+    {
+        Vector3 worldPos = new Vector3(keyData.x, keyData.y, planeZ);
+        GameObject keyObj = Instantiate(keyPrefab, worldPos, Quaternion.identity);
+        KeyObject keyComp = keyObj.AddComponent<KeyObject>();
+        keyComp.keyData = keyData;
+
+        SpriteRenderer sr = keyObj.GetComponent<SpriteRenderer>();
+        if (sr != null && keyData.keyName >= 1 && keyData.keyName <= keySprites.Length)
+            sr.sprite = keySprites[keyData.keyName - 1];
     }
 
     // ---------- 选择与编辑方法 ----------
@@ -260,8 +321,15 @@ public class CreateSceneManager : MonoBehaviour
         keyNameInputField.gameObject.SetActive(false);
         noteTypeInputField.gameObject.SetActive(false); // 隐藏类型输入框
 
+        // 隐藏指令管理相关
+        if (cmdModeToggleBtn != null) cmdModeToggleBtn.gameObject.SetActive(false);
+        if (cmdDropdown != null) cmdDropdown.gameObject.SetActive(false);
+        if (cmdInputField != null) cmdInputField.gameObject.SetActive(false);
+        if (cmdConfirmBtn != null) cmdConfirmBtn.gameObject.SetActive(false);
+
         // 显示下拉列表，用于放置模式选择
         noteTypeDropdown.gameObject.SetActive(true);
+        noteTypeDropdown.value = 0; // 重置为 (empty)
         timeInputField.gameObject.SetActive(true); // 时间输入框保持显示（可用于放置时输入时间）
 
         // 清空信息文本，不显示任何消息
@@ -276,12 +344,13 @@ public class CreateSceneManager : MonoBehaviour
         string keyIndexText = selectedCommand.commandName == "drop_to" ? selectedCommand.key_name.ToString() : "null";
         infoText.text = $"选中音符 [编号 {selectedCommand.num}] (不可编辑)\n" +
                        $"keyindex: {keyIndexText} (可编辑)\n" +
-                       $"时间: {selectedCommand.timeA}\n" +
+                       $"判定时间 (timeB): {selectedCommand.timeB}\n" +
+                       $"开始时间 (timeA): {selectedCommand.timeA}\n" +
                        $"类型: {selectedCommand.type}\n" +
                        $"位置: ({selectedCommand.x1}, {selectedCommand.y1})";
 
-        // 填充时间输入框
-        timeInputField.text = selectedCommand.timeA.ToString(CultureInfo.InvariantCulture);
+        // 填充时间输入框（显示判定时间）
+        timeInputField.text = selectedCommand.timeB.ToString(CultureInfo.InvariantCulture);
 
         // 显示并设置 keyIndex 输入框（仅当是 drop_to 指令时允许编辑）
         bool canEditKeyIndex = (selectedCommand.commandName == "drop_to");
@@ -298,6 +367,9 @@ public class CreateSceneManager : MonoBehaviour
         noteTypeDropdown.gameObject.SetActive(false);
         noteTypeInputField.gameObject.SetActive(true);
         noteTypeInputField.text = selectedCommand.type.ToString(); // 显示当前类型字符串
+
+        // 更新指令管理 UI
+        UpdateCmdManagementUI();
     }
 
     private void UpdateInfoPanelForKey()
@@ -318,14 +390,137 @@ public class CreateSceneManager : MonoBehaviour
         noteTypeInputField.gameObject.SetActive(false); // 隐藏类型输入框
         noteTypeDropdown.gameObject.SetActive(false);    // 隐藏下拉列表（按键无需类型）
         timeInputField.gameObject.SetActive(false);     // 按键不需要时间编辑
+
+        // 隐藏指令管理相关
+        if (cmdModeToggleBtn != null) cmdModeToggleBtn.gameObject.SetActive(false);
+        if (cmdDropdown != null) cmdDropdown.gameObject.SetActive(false);
+        if (cmdInputField != null) cmdInputField.gameObject.SetActive(false);
+        if (cmdConfirmBtn != null) cmdConfirmBtn.gameObject.SetActive(false);
+    }
+
+    // ---------- 指令管理方法 ----------
+    private void ToggleCmdMode()
+    {
+        isAddMode = !isAddMode;
+        UpdateCmdManagementUI();
+    }
+
+    private void UpdateCmdManagementUI()
+    {
+        if (selectedType != SelectedType.Note || selectedCommand == null)
+        {
+            cmdModeToggleBtn.gameObject.SetActive(false);
+            cmdDropdown.gameObject.SetActive(false);
+            cmdInputField.gameObject.SetActive(false);
+            cmdConfirmBtn.gameObject.SetActive(false);
+            return;
+        }
+
+        // 按钮显示文本
+        TextMeshProUGUI btnText = cmdModeToggleBtn.GetComponentInChildren<TextMeshProUGUI>();
+        if (btnText != null) btnText.text = isAddMode ? "切换到删除" : "切换到添加";
+
+        TextMeshProUGUI confirmBtnText = cmdConfirmBtn.GetComponentInChildren<TextMeshProUGUI>();
+        if (confirmBtnText != null) confirmBtnText.text = isAddMode ? "添加指令" : "删除指令";
+
+        cmdModeToggleBtn.gameObject.SetActive(true);
+        cmdConfirmBtn.gameObject.SetActive(true);
+        cmdDropdown.gameObject.SetActive(true);
+
+        cmdDropdown.ClearOptions();
+        if (isAddMode)
+        {
+            // Add 模式：显示可选指令类型
+            cmdDropdown.AddOptions(new List<string> { "shift", "move", "destroy", "drop_to" });
+            cmdInputField.gameObject.SetActive(true);
+            cmdInputField.placeholder.GetComponent<TextMeshProUGUI>().text = "Params (e.g., move_1 or duration)";
+        }
+        else
+        {
+            // Delete 模式：显示该音符已有的指令
+            cmdInputField.gameObject.SetActive(false);
+            var noteCmds = ChartData.Instance.commands.Where(c => c.num == selectedCommand.num).ToList();
+            List<string> options = noteCmds.Select(c => $"{c.commandName} (tA:{c.timeA})").ToList();
+            cmdDropdown.AddOptions(options);
+        }
+    }
+
+    private void OnConfirmCmdAction()
+    {
+        if (selectedType != SelectedType.Note || selectedCommand == null) return;
+
+        if (isAddMode)
+        {
+            // 执行 Add 逻辑
+            string cmdName = cmdDropdown.options[cmdDropdown.value].text;
+            string param = cmdInputField.text;
+            
+            Command newCmd = new Command
+            {
+                num = selectedCommand.num,
+                type = selectedCommand.type,
+                commandName = cmdName,
+                is_show = true,
+                timeA = selectedCommand.timeA, // 默认使用选中指令的时间
+                timeB = selectedCommand.timeB,
+                x1 = selectedCommand.x1,
+                y1 = selectedCommand.y1,
+                x2 = selectedCommand.x2,
+                y2 = selectedCommand.y2,
+                key_name = selectedCommand.key_name,
+                isNoteFirstTimeOccured = false // 新增指令非首次出现
+            };
+
+            // 根据指令类型处理参数
+            if (cmdName == "move") newCmd.json_filename = param;
+            else if (cmdName == "drop_to" && selectedCommand.type == NoteType.Hold)
+            {
+                if (float.TryParse(param, out float dur)) newCmd.hold_duration = dur;
+            }
+
+            ChartData.Instance.AddNoteData(newCmd);
+            ChartData.Instance.SortCommandsByTime();
+            infoText.text = $"已为音符 {selectedCommand.num} 添加指令 {cmdName}";
+        }
+        else
+        {
+            // 执行 Delete 逻辑
+            var noteCmds = ChartData.Instance.commands.Where(c => c.num == selectedCommand.num).ToList();
+            if (cmdDropdown.value >= 0 && cmdDropdown.value < noteCmds.Count)
+            {
+                Command toDelete = noteCmds[cmdDropdown.value];
+                if (toDelete == selectedCommand && noteCmds.Count == 1)
+                {
+                    infoText.text = "不能删除音符的唯一指令，请使用 Delete 键删除整个音符";
+                    return;
+                }
+                
+                ChartData.Instance.commands.Remove(toDelete);
+                if (toDelete == selectedCommand)
+                {
+                    // 如果删除了当前选中的指令，重新选择一个
+                    selectedCommand = ChartData.Instance.commands.FirstOrDefault(c => c.num == toDelete.num);
+                }
+                infoText.text = $"已删除音符 {toDelete.num} 的指令 {toDelete.commandName}";
+            }
+        }
+
+        UpdateCmdManagementUI();
+        UpdateInfoPanelForNote();
     }
 
     // ---------- 编辑事件回调 ----------
     // 下拉列表选择回调：用于进入放置模式并设置当前类型
     private void OnDropdownTypeSelected(int index)
     {
-        // 更新当前要放置的类型
-        currentNoteType = (NoteType)index;
+        if (index == 0) // 选择 "(empty)"，退出放置模式
+        {
+            ExitPlaceMode();
+            return;
+        }
+
+        // 更新当前要放置的类型 (index 0 为 empty，index 1 对应 NoteType.Tap(0))
+        currentNoteType = (NoteType)(index - 1);
 
         // 如果当前没有选中任何对象，则进入放置模式
         if (selectedType == SelectedType.None)
@@ -373,9 +568,14 @@ public class CreateSceneManager : MonoBehaviour
     {
         if (selectedType != SelectedType.Note || selectedCommand == null) return;
 
-        if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float newTime))
-        {
-            selectedCommand.timeA = newTime;
+        if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float newTimeB))
+        {            float duration = selectedCommand.timeB - selectedCommand.timeA;
+            selectedCommand.timeB = newTimeB;
+            selectedCommand.timeA = newTimeB - (duration > 0 ? duration : 1f); // 保持持续时间或设为 1s
+            
+            // 新增：修改时间后重新排序
+            ChartData.Instance.SortCommandsByTime();
+            
             UpdateInfoPanelForNote();
         }
     }
@@ -385,8 +585,7 @@ public class CreateSceneManager : MonoBehaviour
         if (selectedType != SelectedType.Note || selectedCommand == null || selectedCommand.commandName != "drop_to") return;
 
         if (int.TryParse(value, out int newKeyIndex))
-        {
-            selectedCommand.key_name = newKeyIndex;
+        {            selectedCommand.key_name = newKeyIndex;
             UpdateInfoPanelForNote();
         }
     }
@@ -397,6 +596,23 @@ public class CreateSceneManager : MonoBehaviour
 
         if (int.TryParse(value, out int newKeyId))
         {
+            // 新增：检查 ID 是否冲突
+            if (ChartData.Instance.keyDatas.Any(k => k != selectedKeyData && k.keyName == newKeyId))
+            {
+                infoText.text = $"Key ID {newKeyId} 已被其他按键使用！";
+                return;
+            }
+
+            // 新增：同步更新关联该按键的音符
+            int oldKeyId = selectedKeyData.keyName;
+            foreach (var cmd in ChartData.Instance.commands)
+            {
+                if (cmd.key_name == oldKeyId)
+                {
+                    cmd.key_name = newKeyId;
+                }
+            }
+
             selectedKeyData.keyName = newKeyId;
 
             SpriteRenderer sr = selectedObject.GetComponent<SpriteRenderer>();
@@ -405,6 +621,50 @@ public class CreateSceneManager : MonoBehaviour
 
             UpdateInfoPanelForKey();
         }
+    }
+
+    // ---------- 新增辅助方法 ----------
+    private void SpawnExistingObjects()
+    {
+        // 加载音符
+        foreach (var cmd in ChartData.Instance.commands)
+        {
+            SpawnNoteObject(cmd);
+        }
+        // 加载按键
+        foreach (var keyData in ChartData.Instance.keyDatas)
+        {
+            SpawnKeyObject(keyData);
+        }
+    }
+
+    private void DeleteSelected()
+    {
+        if (selectedObject == null) return;
+
+        if (selectedType == SelectedType.Note && selectedCommand != null)
+        {
+            ChartData.Instance.commands.Remove(selectedCommand);
+            infoText.text = $"已删除音符，编号 {selectedCommand.num}";
+        }
+        else if (selectedType == SelectedType.Key && selectedKeyData != null)
+        {
+            // 新增：删除按键时，将所有关联该按键的音符 key_name 重置为 0
+            int oldKeyId = selectedKeyData.keyName;
+            foreach (var cmd in ChartData.Instance.commands)
+            {
+                if (cmd.key_name == oldKeyId)
+                {
+                    cmd.key_name = 0;
+                }
+            }
+
+            ChartData.Instance.keyDatas.Remove(selectedKeyData);
+            infoText.text = $"已删除按键，ID {selectedKeyData.keyName}";
+        }
+
+        Destroy(selectedObject);
+        Deselect();
     }
 
     // ---------- 辅助方法 ----------
@@ -422,8 +682,8 @@ public class CreateSceneManager : MonoBehaviour
             case NoteType.Hold: return 1;
             case NoteType.DTap: return 2;
             case NoteType.Flick: return 3;
-            case NoteType.Drag: return 4;
-            case NoteType.Key: return 5;
+            case NoteType.Key: return 4;
+            case NoteType.Drag: return 5;
             default: return 0;
         }
     }
@@ -446,6 +706,12 @@ public class CreateSceneManager : MonoBehaviour
         if (!isPlacing) return;
         isPlacing = false;
         if (followObject != null) Destroy(followObject);
+
+        // 新增：同步下拉框状态，重置为 "(empty)"
+        if (noteTypeDropdown != null && noteTypeDropdown.value != 0)
+        {
+            noteTypeDropdown.value = 0;
+        }
     }
 
     void UpdateFollowObjectSprite()
@@ -456,7 +722,8 @@ public class CreateSceneManager : MonoBehaviour
 
         if (currentMode == PlaceMode.Note)
         {
-            if (currentNoteType == NoteType.Key)
+            // 如果按住 Ctrl 且当前类型是 Key，预览显示 KeyObject 精灵，否则预览显示音符精灵
+            if (currentNoteType == NoteType.Key && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)))
             {
                 sr.sprite = keySprites.Length > 0 ? keySprites[0] : null;
             }
@@ -471,11 +738,10 @@ public class CreateSceneManager : MonoBehaviour
     // 可以由外部 UI 按钮调用
     public void SetNoteType(int typeIndex)
     {
-        currentNoteType = (NoteType)typeIndex;
-        if (isPlacing)
+        // 直接设置下拉框的值，由 OnDropdownTypeSelected 触发后续逻辑
+        if (noteTypeDropdown != null)
         {
-            ExitPlaceMode();
-            EnterPlaceMode();
+            noteTypeDropdown.value = typeIndex + 1;
         }
     }
 

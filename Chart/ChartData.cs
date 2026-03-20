@@ -104,8 +104,8 @@ public class ChartData : MonoBehaviour
     public List<KeyData> keyDatas = new List<KeyData>();  // 按键初始状态
     public List<Command> commands = new List<Command>();  // 所有音符指令
     public float totalDuration;                           // 谱面总时长
-    public int noteCount;                                // 音符总数量
-    public int keyCount;                                 // 按键总数量
+    public int noteCount => commands?.Count ?? 0;        // 改为属性
+    public int keyCount => keyDatas?.Count ?? 0;         // 改为属性
     [Header("运行时数据（无需手动编辑）")]
     public Dictionary<int, bool> isScorable = new Dictionary<int, bool>(); 
     public List<int> keyIds = new List<int>(); // 存储轨道按键ID列表（对应chart.txt第二行的内容）
@@ -131,19 +131,18 @@ public class ChartData : MonoBehaviour
     /// </summary>
     public void ClearChartContent()
     {
-        keyDatas.Clear();
-        commands.Clear();
-        totalDuration = 0;
-        noteCount = 0;
-        keyCount = 0;
-        isScorable.Clear();
-        keyIds.Clear();
-        // 清空所有KeyData内的指令列表
+        // 先清空所有KeyData内的指令列表（在清空keyDatas之前）
         foreach(var keyData in keyDatas)
         {
             if(keyData?.keyCommands != null) 
                 keyData.keyCommands.Clear();
         }
+
+        keyDatas.Clear();
+        commands.Clear();
+        totalDuration = 0;
+        isScorable.Clear();
+        keyIds.Clear();
     }
 
     // 原有方法保留，仅修改ResetChartData：清空KeyData的指令列表
