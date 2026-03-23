@@ -20,7 +20,7 @@ public class KeyCommand
 // 音符类型枚举
 public enum NoteType
 {
-    Tap, Hold, DTap, Flick, Key, Drag
+    Tap, Hold, MTap, Flick, Key, Drag
 }
 
 // 音符指令

@@ -106,6 +106,19 @@ public class Drag : MonoBehaviour
         if (judgeResult != JudgeResult.None)
         {
             SwitchDragSprite(judgeResult);
+
+            // 更新 UI 显示
+            if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(judgeResult);
+            if (ScoreDisplay.Instance != null) ScoreDisplay.Instance.AddScoreByJudge(judgeResult);
+            
+            if (ComboDisplay.Instance != null)
+            {
+                if (judgeResult == JudgeResult.Perfect || judgeResult == JudgeResult.Good)
+                    ComboDisplay.Instance.AddCombo();
+                else if (judgeResult == JudgeResult.Bad || judgeResult == JudgeResult.Miss)
+                    ComboDisplay.Instance.ResetCombo();
+            }
+
             hasSwitchedSprite = true;
             StartCoroutine(DelayDestroyNote());
         }

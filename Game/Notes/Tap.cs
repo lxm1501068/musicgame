@@ -96,7 +96,21 @@ public class Tap : MonoBehaviour
         if (dropToCommand != null && dropToCommand.judgeResult != JudgeResult.None)
         {
             Debug.Log($"[{gameObject.name}] DropTo判定完成，结果={dropToCommand.judgeResult}，切换精灵并准备销毁");
-            SwitchJudgeSprite(dropToCommand.judgeResult);
+            JudgeResult result = dropToCommand.judgeResult;
+            SwitchJudgeSprite(result);
+
+            // 更新 UI 显示
+            if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(result);
+            if (ScoreDisplay.Instance != null) ScoreDisplay.Instance.AddScoreByJudge(result);
+            
+            if (ComboDisplay.Instance != null)
+            {
+                if (result == JudgeResult.Perfect || result == JudgeResult.Good)
+                    ComboDisplay.Instance.AddCombo();
+                else if (result == JudgeResult.Bad || result == JudgeResult.Miss)
+                    ComboDisplay.Instance.ResetCombo();
+            }
+
             hasSwitchedSprite = true;
             StartCoroutine(DelayDestroyNote());
         }

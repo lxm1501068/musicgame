@@ -201,6 +201,12 @@ public class Hold : MonoBehaviour
                 isHoldStarted = true;
                 holdStartTime = currentTime;
                 SwitchJudgeSprite(judgeResult);
+
+                // 更新 UI 显示（头部判定分数和反馈）
+                if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(judgeResult);
+                if (ScoreDisplay.Instance != null) ScoreDisplay.Instance.AddScoreByJudge(judgeResult);
+                if (ComboDisplay.Instance != null) ComboDisplay.Instance.AddCombo();
+
                 // 立即将左半圆固定在终点（防止后续指令影响）
                 noteData.x = holdFixedEndPos.x;
                 noteData.y = holdFixedEndPos.y;
@@ -209,6 +215,11 @@ public class Hold : MonoBehaviour
             else if (judgeResult == JudgeResult.Miss)
             {
                 SwitchJudgeSprite(JudgeResult.Miss);
+
+                // 更新 UI 显示（Miss 逻辑）
+                if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(JudgeResult.Miss);
+                if (ComboDisplay.Instance != null) ComboDisplay.Instance.ResetCombo();
+
                 noteData.isVisible = false;
                 gameObject.SetActive(false);
                 Debug.Log($"Hold音符{noteData.NoteIndex}初始按下超时 → Miss");
@@ -226,6 +237,11 @@ public class Hold : MonoBehaviour
             {
                 dropToCommand.judgeResult = JudgeResult.Miss;
                 SwitchJudgeSprite(JudgeResult.Miss);
+
+                // 更新 UI 显示（中断 Miss）
+                if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(JudgeResult.Miss);
+                if (ComboDisplay.Instance != null) ComboDisplay.Instance.ResetCombo();
+
                 isHoldCompleted = true;
                 noteData.isVisible = false;
                 gameObject.SetActive(false);
@@ -245,6 +261,11 @@ public class Hold : MonoBehaviour
             {
                 currentRectangleLength = 0;
                 isHoldCompleted = true;
+
+                // Hold 完成加分逻辑（可选：给一个 Perfect 反馈）
+                if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(JudgeResult.Perfect);
+                if (ScoreDisplay.Instance != null) ScoreDisplay.Instance.AddScore(500); // 完成额外加分
+
                 noteData.isVisible = false;
                 gameObject.SetActive(false);
                 Debug.Log($"Hold音符{noteData.NoteIndex}长按完成 → 最终判定：{dropToCommand.judgeResult}");

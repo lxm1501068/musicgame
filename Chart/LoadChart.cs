@@ -154,7 +154,7 @@ public class LoadChart : MonoBehaviour
     }
 
     /// <summary>
-    /// 修正：拆分轨道头部4行 + 按键初始状态行到谱面行 + 谱面指令行
+    /// 修正：拆分轨道头部4行 + 按键初始状态行 + 谱面指令行
     /// </summary>
     private bool SplitChartContent(out List<string> trackKeyLines, out List<string> spectrumLines)
     {
@@ -176,16 +176,12 @@ public class LoadChart : MonoBehaviour
         int lineIndex = 0;
         lineIndex++; // 跳过第一行（注释行）
 
-        // 读取前4行作为轨道头部
+        // 读取前4个非空行作为轨道头部
         int headerLineCount = 0;
         for (; lineIndex < allLines.Count && headerLineCount < 4; lineIndex++)
         {
             string line = allLines[lineIndex].Trim();
-            if (string.IsNullOrEmpty(line))
-            {
-                Debug.LogError("SplitChartContent: 轨道头部未读满4行就遇到空行");
-                return false;
-            }
+            if (string.IsNullOrEmpty(line)) continue; // 跳过空行
             trackKeyLines.Add(line);
             headerLineCount++;
         }
@@ -196,46 +192,42 @@ public class LoadChart : MonoBehaviour
             return false;
         }
 
-        // ========== 步骤2：读取按键初始状态行（含标记行，直到空行） ==========
-        List<string> keyInitialStateLines = new List<string>();
-        for (; lineIndex < allLines.Count; lineIndex++)
+        // ========== 步骤2：找到「谱面」分割符，将其之前（头部之后）的作为按键状态，之后的作为指令 ==========
+        int spectrumMarkerIndex = -1;
+        for (int i = lineIndex; i < allLines.Count; i++)
         {
-            string line = allLines[lineIndex].Trim();
-            if (string.IsNullOrEmpty(line))
+            if (allLines[i].Trim() == "谱面")
             {
-                lineIndex++; // 跳过空行，找「谱面」分割符
+                spectrumMarkerIndex = i;
                 break;
             }
-            // 保留原始行（含标记行），加入谱面行的前置部分
-            keyInitialStateLines.Add(allLines[lineIndex].Trim());
         }
 
-        // ========== 步骤3：找到「谱面」分割符，读取后续谱面指令行 ==========
-        bool spectrumFound = false;
-        List<string> noteCommandLines = new List<string>();
-        for (; lineIndex < allLines.Count; lineIndex++)
-        {
-            string line = allLines[lineIndex].Trim();
-            if (line == "谱面")
-            {
-                spectrumFound = true;
-                continue;
-            }
-            if (spectrumFound && !string.IsNullOrEmpty(line))
-            {
-                noteCommandLines.Add(line);
-            }
-        }
-
-        if (!spectrumFound)
+        if (spectrumMarkerIndex == -1)
         {
             Debug.LogError("SplitChartContent: 未找到「谱面」分割符");
             return false;
         }
 
-        // ========== 合并：按键初始状态行 + 谱面指令行 → spectrumLines ==========
-        spectrumLines.AddRange(keyInitialStateLines);
-        spectrumLines.AddRange(noteCommandLines);
+        // 头部之后到「谱面」之前的行：按键初始状态
+        for (int i = lineIndex; i < spectrumMarkerIndex; i++)
+        {
+            string line = allLines[i].Trim();
+            if (!string.IsNullOrEmpty(line))
+            {
+                spectrumLines.Add(line);
+            }
+        }
+
+        // 「谱面」之后的行：指令
+        for (int i = spectrumMarkerIndex; i < allLines.Count; i++)
+        {
+            string line = allLines[i].Trim();
+            if (!string.IsNullOrEmpty(line))
+            {
+                spectrumLines.Add(line);
+            }
+        }
 
         return true;
     }
@@ -312,8 +304,6 @@ public class LoadChart : MonoBehaviour
         ChartData.Instance.ResetChartData();
         // 赋值轨道按键列表+数量到ChartData
         ChartData.Instance.keyIds = this.KeyIds;
-        // ChartData.Instance.keyCount = this.KeyCount; // keyCount 是属性，无需赋值
-        // ChartData.Instance.noteCount = noteCount;     // noteCount 是属性，无需赋值
         ChartData.Instance.totalDuration = totalDuration;
         
         // 使用本地缓存的谱面行解析
@@ -326,11 +316,10 @@ public class LoadChart : MonoBehaviour
     }
 
     /// <summary>
-    /// 优化：兼容无标记行，直接解析前N行（N=轨道按键数）作为按键初始状态
+    /// 优化：解析按键初始状态
     /// </summary>
     private void ParseKeyInitialState(List<string> spectrumLines)
     {
-        // 方案1：优先找标记行（兼容原有逻辑）
         int keyStateStartIndex = -1;
         for (int i = 0; i < spectrumLines.Count; i++)
         {
@@ -341,20 +330,17 @@ public class LoadChart : MonoBehaviour
             }
         }
 
-        // 方案2：无标记行时，取前KeyCount行作为按键初始状态
+        // 如果没找到标记行，尝试从头开始（直到遇到“谱面”）
         if (keyStateStartIndex == -1)
         {
-            Debug.LogWarning("ParseKeyInitialState: 未找到标记行，尝试解析前KeyCount行作为按键初始状态");
             keyStateStartIndex = 0;
         }
 
-        // 解析按键初始状态（最多解析KeyCount行）
         int parsedCount = 0;
-        for (int i = keyStateStartIndex; i < spectrumLines.Count && parsedCount < KeyCount; i++)
+        for (int i = keyStateStartIndex; i < spectrumLines.Count; i++)
         {
             string line = spectrumLines[i];
-            // 遇到谱面指令标记行则停止
-            if (line.StartsWith("(note num command time_a time_b x1 y1 x2 y2)")) break;
+            if (line == "谱面" || line.StartsWith("(note num command")) break;
             
             var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length == 4)
@@ -367,16 +353,7 @@ public class LoadChart : MonoBehaviour
                     ChartData.Instance.keyDatas.Add(new KeyData(keyName, x, y, show));
                     parsedCount++;
                 }
-                else
-                {
-                    Debug.LogWarning($"ParseKeyInitialState: 解析失败，行内容：{line}");
-                }
             }
-        }
-
-        if (parsedCount == 0)
-        {
-            Debug.LogError("ParseKeyInitialState: 未解析到任何按键初始状态");
         }
     }
 
@@ -386,44 +363,42 @@ public class LoadChart : MonoBehaviour
     private void ParseCommands(List<string> spectrumLines)
     {
         int commandStartIndex = -1;
-        // 查找指令起始标记行
+        // 优先寻找“谱面”标记
         for (int i = 0; i < spectrumLines.Count; i++)
         {
-            if (spectrumLines[i].StartsWith("(note num command time_a time_b x1 y1 x2 y2)"))
+            if (spectrumLines[i] == "谱面")
             {
                 commandStartIndex = i + 1;
                 break;
             }
         }
         
+        // 如果没找到“谱面”，再寻找指令列定义标记
         if (commandStartIndex == -1)
         {
-            // 先确定按键初始状态行的起始索引
-            int keyStateStartIndex = 0;
             for (int i = 0; i < spectrumLines.Count; i++)
             {
-                if (spectrumLines[i].StartsWith("(key_name x y show)"))
+                if (spectrumLines[i].StartsWith("(note num command"))
                 {
-                    keyStateStartIndex = i + 1; // 数据行开始
+                    commandStartIndex = i + 1;
                     break;
                 }
             }
-            // 如果没有找到标记行，则 keyStateStartIndex 保持 0
-            commandStartIndex = keyStateStartIndex + KeyCount;
-            Debug.Log($"ParseCommands: 未找到谱面指令标记行，从按键初始状态后开始解析，起始索引={commandStartIndex}");
+        }
+        
+        if (commandStartIndex == -1)
+        {
+            Debug.LogError("ParseCommands: 未能找到指令起始位置（缺少“谱面”或指令标记行）");
+            return;
         }
         
         for (int i = commandStartIndex; i < spectrumLines.Count; i++)
         {
             string line = spectrumLines[i];
-            if (string.IsNullOrEmpty(line)) continue;
+            if (string.IsNullOrEmpty(line) || line.StartsWith("(")) continue;
             
             var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length < 3)
-            {
-                Debug.LogWarning($"ParseCommands: 指令行格式错误，内容：{line}");
-                continue;
-            }
+            if (parts.Length < 3) continue;
             
             switch (parts[0])
             {
@@ -438,9 +413,6 @@ public class LoadChart : MonoBehaviour
                     break;
                 case "$":
                     ParseKeyMoveCommand(parts);
-                    break;
-                default:
-                    Debug.LogWarning($"ParseCommands: 未知指令标识，行内容：{line}");
                     break;
             }
         }
@@ -550,7 +522,7 @@ public class LoadChart : MonoBehaviour
                             float.TryParse(parts[9], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
                             float.TryParse(parts[10], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
                         }
-                        if (noteType == NoteType.Hold && parts.Length >= 12)
+                        if ((noteType == NoteType.Hold || noteType == NoteType.MTap) && parts.Length >= 12)
                         {
                             float.TryParse(parts[11], NumberStyles.Float, CultureInfo.InvariantCulture, out hold_duration);
                         }
@@ -716,7 +688,8 @@ public class LoadChart : MonoBehaviour
         {
             "tap" => NoteType.Tap,
             "hold" => NoteType.Hold,
-            "dtap" => NoteType.DTap,
+            "mtap" => NoteType.MTap,
+            "dtap" => NoteType.MTap,
             "flick" => NoteType.Flick,
             "key" => NoteType.Key,
             "drag" => NoteType.Drag,

@@ -17,9 +17,8 @@ public class Flick : MonoBehaviour
     public float destroyDelay = 0.2f;
 
     [Header("Flick 专属配置")]
-    public int spaceKeyIndex = 11;                     // 空格键的索引
-    public List<int> validOtherKeyIndices = new List<int>() { 0, 6, 7, 8, 9 }; // 需要同时按下的其他键
-    public float perfectThreshold = 0.1f;              // Perfect 判定窗口（秒）
+    public float perfectThreshold = 0.15f;             // Perfect 判定窗口（稍微调宽一点，因为是双键）
+    public float secondKeyWindow = 0.3f;               // 第二个按键的响应窗口
 
     [Header("固定运动参数")]
     public Vector2 startPos = new Vector2(0, 5);   // 画面正上方起始点（根据实际屏幕调整）
@@ -28,6 +27,8 @@ public class Flick : MonoBehaviour
     private SpriteRenderer spriteRenderer;
     private bool hasSwitchedSprite = false;
     private JudgeResult judgeResult = JudgeResult.None;
+    private bool isWaitingForSecondKey = false;
+    private float spacePressTime = 0f;
 
     private float startTime;   // 从 timeA 获取
     private float endTime;     // 从 timeB 获取
@@ -58,9 +59,6 @@ public class Flick : MonoBehaviour
             enabled = false;
             return;
         }
-
-        // 确保有效键列表中不包含空格键（避免误判）
-        validOtherKeyIndices.RemoveAll(x => x == spaceKeyIndex);
     }
 
     void Update()
@@ -103,6 +101,20 @@ public class Flick : MonoBehaviour
         if (judgeResult != JudgeResult.None)
         {
             SwitchJudgeSprite(judgeResult);
+            // 显示全局判定结果
+            if (JudgeResultDisplay.Instance != null)
+                JudgeResultDisplay.Instance.ShowJudgeResult(judgeResult);
+            
+            // 更新分数和连击
+            if (ScoreDisplay.Instance != null) ScoreDisplay.Instance.AddScoreByJudge(judgeResult);
+            if (ComboDisplay.Instance != null)
+            {
+                if (judgeResult == JudgeResult.Perfect || judgeResult == JudgeResult.Good)
+                    ComboDisplay.Instance.AddCombo();
+                else if (judgeResult == JudgeResult.Bad || judgeResult == JudgeResult.Miss)
+                    ComboDisplay.Instance.ResetCombo();
+            }
+
             hasSwitchedSprite = true;
             StartCoroutine(DelayDestroyNote());
         }
@@ -155,39 +167,52 @@ public class Flick : MonoBehaviour
     }
 
     /// <summary>
-    /// Flick 判定逻辑（仅 Perfect / Miss）
+    /// Flick 判定逻辑（空格 + 任意其他键）
     /// </summary>
     private void CheckFlickJudge(float currentTime)
     {
         if (judgeResult != JudgeResult.None) return;
 
         float timeDiff = currentTime - judgeTime;
-        float absTimeDiff = Mathf.Abs(timeDiff);
 
-        // 超出 Perfect 窗口直接判 Miss
-        if (absTimeDiff > perfectThreshold)
+        // 如果不在等待第二个键
+        if (!isWaitingForSecondKey)
         {
-            SetJudgeResult(JudgeResult.Miss, timeDiff);
-            return;
-        }
-
-        // 检查空格键 + 任意有效键是否同时按下
-        bool spacePressed = InputManager.Instance.IsGroupPressed(spaceKeyIndex);
-        if (!spacePressed) return;
-
-        bool otherPressed = false;
-        foreach (int keyIndex in validOtherKeyIndices)
-        {
-            if (InputManager.Instance.IsGroupPressed(keyIndex))
+            // 1. 检查是否完全错过判定窗口
+            if (timeDiff > perfectThreshold)
             {
-                otherPressed = true;
-                break;
+                SetJudgeResult(JudgeResult.Miss, timeDiff);
+                return;
+            }
+
+            // 2. 在判定窗口内，检查空格键是否按下
+            if (Mathf.Abs(timeDiff) <= perfectThreshold && Input.GetKeyDown(KeyCode.Space))
+            {
+                isWaitingForSecondKey = true;
+                spacePressTime = currentTime;
+                Debug.Log($"[{noteData.NoteIndex}] Flick: 空格已按下，等待第二个键...");
             }
         }
-        if (!otherPressed) return;
+        else // 正在等待第二个键
+        {
+            // 1. 检查是否超过第二个键的响应时间
+            if (currentTime - spacePressTime > secondKeyWindow)
+            {
+                SetJudgeResult(JudgeResult.Miss, currentTime - spacePressTime);
+                return;
+            }
 
-        // 在 Perfect 窗口内且按键正确 → Perfect
-        SetJudgeResult(JudgeResult.Perfect, timeDiff);
+            // 2. 在响应窗口内，检查 zxcvbnm 是否被按下
+            string[] targetKeys = { "z", "x", "c", "v", "b", "n", "m" };
+            foreach (string key in targetKeys)
+            {
+                if (Input.GetKeyDown(key))
+                {
+                    SetJudgeResult(JudgeResult.Perfect, currentTime - judgeTime);
+                    return; // 找到一个就判定成功并退出
+                }
+            }
+        }
     }
 
     private void SetJudgeResult(JudgeResult result, float timeDiff)

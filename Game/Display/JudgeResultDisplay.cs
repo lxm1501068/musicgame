@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections;
 
 /// <summary>
 /// 全局判定结果显示组件（单例模式）
@@ -20,9 +21,16 @@ public class JudgeResultDisplay : MonoBehaviour
     [Tooltip("无判定时自动隐藏的延迟（秒）")]
     public float hideDelay = 2f;
 
+    [Header("动画配置")]
+    [Tooltip("判定结果出现时的缩放动画曲线")]
+    public AnimationCurve scaleCurve = AnimationCurve.EaseInOut(0, 0.5f, 0.2f, 1.2f);
+    [Tooltip("缩放动画持续时间")]
+    public float animationDuration = 0.2f;
+
     private SpriteRenderer spriteRenderer; // 精灵渲染器
     private float lastJudgeTime; // 最后一次判定的时间
     private bool isHidden = true; // 是否处于隐藏状态
+    private Coroutine activeAnimation;
 
     /// <summary>
     /// 单例初始化（确保全局唯一）
@@ -58,6 +66,21 @@ public class JudgeResultDisplay : MonoBehaviour
         {
             HideJudgeResult();
         }
+    }
+
+    private IEnumerator PlayAppearAnimation()
+    {
+        float elapsed = 0f;
+        while (elapsed < animationDuration)
+        {
+            float t = elapsed / animationDuration;
+            float scale = scaleCurve.Evaluate(t);
+            transform.localScale = Vector3.one * scale;
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+        transform.localScale = Vector3.one;
+        activeAnimation = null;
     }
 
     /// <summary>
@@ -97,8 +120,12 @@ public class JudgeResultDisplay : MonoBehaviour
                 break;
             default:
                 HideJudgeResult();
-                break;
+                return;
         }
+
+        // 播放出现动画
+        if (activeAnimation != null) StopCoroutine(activeAnimation);
+        activeAnimation = StartCoroutine(PlayAppearAnimation());
 
         // 调试日志
         Debug.Log($"[JudgeResultDisplay] 展示判定结果：{result}");
@@ -109,8 +136,10 @@ public class JudgeResultDisplay : MonoBehaviour
     /// </summary>
     private void HideJudgeResult()
     {
-        spriteRenderer.enabled = false;
+        if (spriteRenderer != null)
+            spriteRenderer.enabled = false;
         isHidden = true;
+        transform.localScale = Vector3.one;
     }
 
     /// <summary>

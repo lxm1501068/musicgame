@@ -210,6 +210,13 @@ public class GameManager : MonoBehaviour
             return;
         }
 
+        // 核心修改：确保只有在加载解析完成后才允许开始播放
+        if (!IsChartLoadedAndParsed)
+        {
+            Debug.LogError("GameManager.PlayChart: 谱面加载/解析未完成，无法开始播放！");
+            return;
+        }
+
         // 重置播放状态
         IsPlaying = true;
         chartStartTime = Time.time;
@@ -219,7 +226,15 @@ public class GameManager : MonoBehaviour
         // +++ BGM 新增：开始播放 BGM
         if (bgmAudioSource != null && !bgmAudioSource.isPlaying)
         {
-            bgmAudioSource.Play();
+            // 确保音频已准备就绪
+            if (bgmAudioSource.clip != null)
+            {
+                bgmAudioSource.Play();
+            }
+            else
+            {
+                Debug.LogWarning("GameManager.PlayChart: BGM AudioSource 没有赋值 Clip，将不播放音乐");
+            }
         }
 
         Debug.Log("GameManager: 谱面开始播放！");

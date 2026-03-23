@@ -6,7 +6,7 @@ public class ChartRunner : MonoBehaviour
     #region 公共配置字段（Unity编辑器赋值）
     [Header("音符预制体")]
     public GameObject tapPrefab;       // Tap音符预制体
-    public GameObject dtapPrefab;      // Dtap音符预制体
+    public GameObject mtapPrefab;      // Mtap音符预制体
     public GameObject holdPrefab;      // Hold音符预制体
     public GameObject flickPrefab;     // Flick音符预制体
     public GameObject dragPrefab;      // Drag音符预制体
@@ -49,7 +49,7 @@ public class ChartRunner : MonoBehaviour
             GameObject notePrefab = cmd.type switch
             {
                 NoteType.Tap => tapPrefab,
-                NoteType.DTap => dtapPrefab,
+                NoteType.MTap => mtapPrefab,
                 NoteType.Hold => holdPrefab,
                 NoteType.Flick => flickPrefab,
                 NoteType.Drag => dragPrefab,
@@ -69,12 +69,15 @@ public class ChartRunner : MonoBehaviour
             // 2. 初始化NoteData数据（从Command映射到NoteData字段）
             InitNoteData(noteData, cmd);
 
-            // 3. （可选）如果音符需要绑定指令，初始化指令列表
+            // 3. 获取该音符的所有相关指令（包括首次和后续指令）
             if (noteData.commands == null)
             {
                 noteData.commands = new List<Command>();
             }
-            noteData.commands.Add(cmd);
+            
+            // 查找所有编号相同的指令
+            var relatedCmds = ChartData.Instance.commands.FindAll(c => c.num == cmd.num);
+            noteData.commands.AddRange(relatedCmds);
 
             allNotes.Add(noteObj);
             Debug.Log($"ChartRunner: 创建音符编号为{cmd.num} ");
