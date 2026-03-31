@@ -5,9 +5,6 @@ using System.IO;
 
 public class InputManager : MonoBehaviour
 {
-    /// <summary>
-    /// 单例实例
-    /// </summary>
     public static InputManager Instance;
     
     private Dictionary<string, KeyCode> keyNameToKeyCode = new Dictionary<string, KeyCode>();
@@ -16,8 +13,8 @@ public class InputManager : MonoBehaviour
     
     public event Action<int> OnGroupKeyPressed;
 
-    private const string ConfigFileName = "input.json";                // 持久化文件名
-    private const string DefaultConfigResourceName = "input_default";  // Resources 中的默认配置（无扩展名）
+    private const string ConfigFileName = "input.json";
+    private const string DefaultConfigResourceName = "input_default";
 
     void Awake()
     {
@@ -49,21 +46,22 @@ public class InputManager : MonoBehaviour
         CheckKeyGroups();
     }
 
-    void InitializeKeyMappings()
+    private void InitializeKeyMappings()
     {
+        // 0-9
         for (int i = 0; i <= 9; i++)
         {
-            string keyName = i.ToString();
-            keyNameToKeyCode[keyName] = (KeyCode)Enum.Parse(typeof(KeyCode), "Alpha" + i);
+            keyNameToKeyCode[i.ToString()] = KeyCode.Alpha0 + i;
         }
         
+        // a-z
         for (char c = 'a'; c <= 'z'; c++)
         {
             string keyName = c.ToString();
-            KeyCode keyCode = (KeyCode)Enum.Parse(typeof(KeyCode), keyName.ToUpper());
-            keyNameToKeyCode[keyName] = keyCode;
+            keyNameToKeyCode[keyName] = (KeyCode)Enum.Parse(typeof(KeyCode), keyName.ToUpper());
         }
         
+        // 常用特殊键
         keyNameToKeyCode["space"] = KeyCode.Space;
         keyNameToKeyCode[","] = KeyCode.Comma;
         keyNameToKeyCode["."] = KeyCode.Period;
@@ -71,24 +69,18 @@ public class InputManager : MonoBehaviour
         keyNameToKeyCode["/"] = KeyCode.Slash;
     }
 
-    /// <summary>
-    /// 从 persistentDataPath 加载配置，若文件不存在则从 Resources 复制默认配置
-    /// </summary>
-    bool LoadKeyGroupsFromPersistentPath()
+    private bool LoadKeyGroupsFromPersistentPath()
     {
         string persistentPath = Path.Combine(Application.persistentDataPath, ConfigFileName);
 
-        // 如果持久化文件不存在，尝试从 Resources 复制默认配置
         if (!File.Exists(persistentPath))
         {
-            Debug.Log($"配置文件不存在于 {persistentPath}，尝试从 Resources 复制默认配置...");
             TextAsset defaultConfig = Resources.Load<TextAsset>(DefaultConfigResourceName);
             if (defaultConfig != null)
             {
                 try
                 {
                     File.WriteAllText(persistentPath, defaultConfig.text);
-                    Debug.Log($"默认配置已复制到 {persistentPath}");
                 }
                 catch (Exception e)
                 {
@@ -96,35 +88,21 @@ public class InputManager : MonoBehaviour
                     return false;
                 }
             }
-            else
-            {
-                Debug.LogError($"Resources 中未找到默认配置文件 {DefaultConfigResourceName}，将使用硬编码默认组。");
-                return false;
-            }
+            else return false;
         }
 
-        // 从持久化路径读取配置
         try
         {
             string jsonText = File.ReadAllText(persistentPath);
             InputConfig config = JsonUtility.FromJson<InputConfig>(jsonText);
 
-            if (config == null || config.groups == null || config.groups.Length == 0)
-            {
-                Debug.LogError("JSON 配置文件格式错误或没有定义任何按键组。");
-                return false;
-            }
+            if (config == null || config.groups == null || config.groups.Length == 0) return false;
 
             keyGroups.Clear();
             foreach (var group in config.groups)
             {
-                if (group.keys != null && group.keys.Length > 0)
-                    keyGroups.Add(new List<string>(group.keys));
-                else
-                    keyGroups.Add(new List<string>());
+                keyGroups.Add(group.keys != null ? new List<string>(group.keys) : new List<string>());
             }
-
-            Debug.Log($"成功从 {persistentPath} 加载 {keyGroups.Count} 个按键组。");
             return true;
         }
         catch (Exception e)
@@ -134,7 +112,7 @@ public class InputManager : MonoBehaviour
         }
     }
 
-    void InitializeDefaultKeyGroups()
+    private void InitializeDefaultKeyGroups()
     {
         keyGroups.Clear();
         keyGroups.Add(new List<string> { "1", "2", "q", "w" });
@@ -150,128 +128,78 @@ public class InputManager : MonoBehaviour
         keyGroups.Add(new List<string> { "space" });
     }
 
-    void ResetFrameTriggerStates()
+    private void ResetFrameTriggerStates()
     {
+        if (groupTriggeredThisFrame.Length != keyGroups.Count)
+            groupTriggeredThisFrame = new bool[keyGroups.Count];
+
         for (int i = 0; i < groupTriggeredThisFrame.Length; i++)
             groupTriggeredThisFrame[i] = false;
     }
 
-    void CheckKeyGroups()
+    private void CheckKeyGroups()
     {
-        for (int groupIndex = 0; groupIndex < keyGroups.Count; groupIndex++)
+        for (int i = 0; i < keyGroups.Count; i++)
         {
-            if (groupTriggeredThisFrame[groupIndex])
-                continue;
-                
-            var group = keyGroups[groupIndex];
-            
-            foreach (var keyName in group)
+            if (IsGroupPressed(i))
             {
-                if (keyNameToKeyCode.TryGetValue(keyName, out KeyCode keyCode))
-                {
-                    if (Input.GetKeyDown(keyCode))
-                    {
-                        groupTriggeredThisFrame[groupIndex] = true;
-                        Debug.Log($"按键组 {groupIndex} 被触发");
-                        int groupNumber = groupIndex + 1;
-                        SendGroupCommand(groupNumber);
-                        break;
-                    }
-                }
+                groupTriggeredThisFrame[i] = true;
+                OnGroupKeyPressed?.Invoke(i); // 统一使用 0-based 索引
             }
         }
     }
 
-    void SendGroupCommand(int groupNumber)
+    /// <summary>
+    /// 检查按键组是否在当前帧按下（0-based 索引）
+    /// </summary>
+    public bool IsGroupPressed(int groupIndex)
     {
-        OnGroupKeyPressed?.Invoke(groupNumber);
-    }
-
-    public bool IsGroupPressed(int groupNumber)
-    {
-        if (groupNumber >= 0 && groupNumber < keyGroups.Count)
+        if (groupIndex < 0 || groupIndex >= keyGroups.Count) return false;
+        
+        foreach (var keyName in keyGroups[groupIndex])
         {
-            int groupIndex = groupNumber;
-            var group = keyGroups[groupIndex];
-            
-            foreach (var keyName in group)
+            if (keyNameToKeyCode.TryGetValue(keyName, out KeyCode keyCode))
             {
-                if (keyNameToKeyCode.TryGetValue(keyName, out KeyCode keyCode))
-                {
-                    if (Input.GetKeyDown(keyCode))
-                        return true;
-                }
+                if (Input.GetKeyDown(keyCode)) return true;
             }
         }
         return false;
     }
     
-    public bool IsGroupHeld(int groupNumber)
+    /// <summary>
+    /// 检查按键组是否正在按住（0-based 索引）
+    /// </summary>
+    public bool IsGroupHeld(int groupIndex)
     {
-        if (groupNumber >= 0 && groupNumber < keyGroups.Count)
+        if (groupIndex < 0 || groupIndex >= keyGroups.Count) return false;
+        
+        foreach (var keyName in keyGroups[groupIndex])
         {
-            int groupIndex = groupNumber;
-            var group = keyGroups[groupIndex];
-            
-            foreach (var keyName in group)
+            if (keyNameToKeyCode.TryGetValue(keyName, out KeyCode keyCode))
             {
-                if (keyNameToKeyCode.TryGetValue(keyName, out KeyCode keyCode))
-                {
-                    if (Input.GetKey(keyCode))
-                        return true;
-                }
+                if (Input.GetKey(keyCode)) return true;
             }
         }
         return false;
     }
-    
-    public List<int> GetAllPressedGroups()
+
+    /// <summary>
+    /// 检查特定名称的按键是否按下
+    /// </summary>
+    public bool IsKeyPressed(string keyName)
     {
-        List<int> pressedGroups = new List<int>();
-        
-        for (int groupIndex = 0; groupIndex < keyGroups.Count; groupIndex++)
+        if (keyNameToKeyCode.TryGetValue(keyName.ToLower(), out KeyCode keyCode))
         {
-            var group = keyGroups[groupIndex];
-            
-            foreach (var keyName in group)
-            {
-                if (keyNameToKeyCode.TryGetValue(keyName, out KeyCode keyCode))
-                {
-                    if (Input.GetKeyDown(keyCode))
-                    {
-                        pressedGroups.Add(groupIndex + 1);
-                        break;
-                    }
-                }
-            }
+            return Input.GetKeyDown(keyCode);
         }
-        
-        return pressedGroups;
+        return false;
     }
 
-    public int GetGroupCount()
-    {
-        return keyGroups.Count;
-    }
-
-    public List<string> GetGroupKeys(int groupNumber)
-    {
-        if (groupNumber >= 1 && groupNumber <= keyGroups.Count)
-        {
-            return new List<string>(keyGroups[groupNumber - 1]);
-        }
-        return new List<string>();
-    }
+    public int GetGroupCount() => keyGroups.Count;
 }
 
 [Serializable]
-public class KeyGroupConfig
-{
-    public string[] keys;
-}
+public class KeyGroupConfig { public string[] keys; }
 
 [Serializable]
-public class InputConfig
-{
-    public KeyGroupConfig[] groups;
-}
+public class InputConfig { public KeyGroupConfig[] groups; }

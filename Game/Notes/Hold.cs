@@ -1,130 +1,53 @@
 using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
 
-[RequireComponent(typeof(NoteData))]
-public class Hold : MonoBehaviour
+public class Hold : BaseNote
 {
     #region 组件引用
-    private NoteData noteData;
     private SpriteRenderer leftSemiCircle;
     private SpriteRenderer rectanglePart;
     private SpriteRenderer rightSemiCircle;
     private Transform rectangleTransform;
     private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
-    private DropToCommand dropToCommand;
     private List<MoveCommand> moveCommands = new List<MoveCommand>();
-    private float holdDuration;                // 从谱面读取的 hold_duration（总按住时长）
+    private DropToCommand dropToCommand;
+    private float holdDuration;
     #endregion
 
-    #region Hold特有配置
-    [Header("Hold判定配置")]
-    public float holdCheckInterval = 0.05f;
-    public float holdCompleteThreshold = 0.1f; // 提前多少时间视为完成
-
-    [Header("Hold视觉配置 - 半圆（左右共用）")]
+    #region Hold配置
+    [Header("Hold视觉配置 - 半圆")]
     public Sprite semiCircleDefault;
     public Sprite semiCirclePerfect;
     public Sprite semiCircleGood;
     public Sprite semiCircleBad;
     public Sprite semiCircleMiss;
 
-    [Header("Hold视觉配置 - 矩形部分")]
+    [Header("Hold视觉配置 - 矩形")]
     public Sprite rectangleDefault;
     public Sprite rectanglePerfect;
     public Sprite rectangleGood;
     public Sprite rectangleBad;
     public Sprite rectangleMiss;
 
-    // 胶囊方向与长度（由drop_to指令决定）
     private Vector2 holdDirection = Vector2.right;
-    private float totalHoldLength = 2.0f;          // 总长度 = speed * hold_duration
-    private float currentRectangleLength;           // 当前矩形长度（随时间缩短）
-
+    private float totalHoldLength = 2.0f;
+    private float currentRectangleLength;
     private bool isHoldStarted = false;
     private bool isHoldCompleted = false;
     private float holdStartTime = 0;
-
-    private bool isCommandsInitialized = false;
-    private float firstCommandStartTime;
-
-    // 固定终点坐标（头部判定后左半圆固定于此）
     private Vector2 holdFixedEndPos;
+    private float holdCompleteThreshold = 0.1f;
     #endregion
 
-    #region 生命周期
-    private void Awake()
+    protected override void Awake()
     {
-        noteData = GetComponent<NoteData>();
-        if (noteData == null)
-        {
-            Debug.LogError($"Hold音符{noteData.NoteIndex}缺少NoteData组件！");
-            enabled = false;
-            return;
-        }
-
-        InitializeCapsuleComponents();               // 创建子物体，但初始隐藏
-        HideAllParts();                              // 隐藏所有子部件
-        currentRectangleLength = totalHoldLength;    // 初始长度等于总长
+        base.Awake();
+        InitializeCapsuleComponents();
+        currentRectangleLength = totalHoldLength;
     }
 
-    private void Update()
-    {
-        if (GameManager.Instance == null) return;
-        float currentPlayTime = GameManager.Instance.CurrentPlayTime;
-        if (currentPlayTime == -1) return;
-
-        if (!isCommandsInitialized)
-        {
-            InitCommands();
-            Debug.Log($"Hold音符{noteData.NoteIndex}指令初始化完成，firstCommandStartTime={firstCommandStartTime}");
-            transform.position = new Vector2(noteData.x, noteData.y); // 左半圆圆心
-            isCommandsInitialized = true;
-            return;
-        }
-
-        // 根据第一个指令的开始时间控制显示
-        if (currentPlayTime < firstCommandStartTime)
-        {
-            HideAllParts();
-            return;
-        }
-        else
-        {
-            ShowAllParts();
-        }
-
-        // 更新位置：头部判定前由指令驱动，头部判定后固定在终点
-        if (!isHoldStarted)
-        {
-            UpdateNotePosition(currentPlayTime, Time.deltaTime);
-        }
-        else
-        {
-            // 强制固定左半圆在终点
-            noteData.x = holdFixedEndPos.x;
-            noteData.y = holdFixedEndPos.y;
-        }
-        transform.position = new Vector3(noteData.x, noteData.y, transform.position.z);
-
-        // 更新胶囊视觉（根据当前剩余长度和方向）
-        UpdateCapsuleVisual(currentRectangleLength);
-
-        // 判定逻辑
-        UpdateHoldJudge(currentPlayTime);
-    }
-
-    private void OnDestroy()
-    {
-        shiftCommands.Clear();
-        moveCommands.Clear();
-        shiftCommands = null;
-        moveCommands = null;
-        dropToCommand = null;
-    }
-    #endregion
-
-    #region 指令初始化
-    private void InitCommands()
+    protected override void InitCommands()
     {
         if (noteData.commands == null || noteData.commands.Count == 0) return;
 
@@ -140,144 +63,136 @@ public class Hold : MonoBehaviour
                 dropToCommand.perfectThreshold = 0.15f;
                 dropToCommand.goodThreshold = 0.25f;
                 dropToCommand.badThreshold = 0.35f;
-                holdDuration = cmd.hold_duration;                     // 记录按住总时长
+                holdDuration = cmd.hold_duration;
 
-                // 从drop_to指令计算方向
                 Vector2 start = new Vector2(cmd.x1, cmd.y1);
                 Vector2 end = new Vector2(cmd.x2, cmd.y2);
-                holdDirection = -1*(end - start).normalized;
+                holdDirection = -1 * (end - start).normalized;
 
-                // 总长度 = 速度 * 按住时长
                 totalHoldLength = dropToCommand.speed * holdDuration;
                 currentRectangleLength = totalHoldLength;
-
-                // 记录终点坐标（用于固定左半圆）
                 holdFixedEndPos = end;
 
-                // 将drop_to也加入移动列表，确保其位移在头部判定前被执行
                 shiftCommands.Add(dropToCommand);
             }
             else if (cmdName == "shift")
             {
-                var shiftCmd = new ShiftCommand(noteData, cmd);
-                shiftCommands.Add(shiftCmd);
+                shiftCommands.Add(new ShiftCommand(noteData, cmd));
             }
             else if (cmdName == "move" && !string.IsNullOrEmpty(cmd.json_filename))
             {
-                var moveCmd = new MoveCommand(noteData, cmd);
-                moveCommands.Add(moveCmd);
+                moveCommands.Add(new MoveCommand(noteData, cmd));
             }
         }
-
-        if (dropToCommand == null)
-            Debug.Log($"Hold音符{noteData.NoteIndex}缺少DropTo指令（必须）！");
     }
-    #endregion
 
-    #region 位置更新
-    private void UpdateNotePosition(float currentTime, float deltaTime)
+    protected override void UpdateVisibility(float currentTime)
     {
-        // 头部判定前才执行指令位移
-        foreach (var moveCmd in moveCommands)
-            moveCmd.UpdateNotePosition(currentTime);
-        foreach (var shiftCmd in shiftCommands)
-            shiftCmd.UpdateNotePosition(currentTime, deltaTime);
+        bool shouldBeVisible = currentTime >= firstCommandStartTime && !isHoldCompleted;
+        if (leftSemiCircle.enabled != shouldBeVisible) leftSemiCircle.enabled = shouldBeVisible;
+        if (rectanglePart.enabled != shouldBeVisible) rectanglePart.enabled = shouldBeVisible;
+        if (rightSemiCircle.enabled != shouldBeVisible) rightSemiCircle.enabled = shouldBeVisible;
+        
+        // BaseNote uses spriteRenderer.enabled, we sync it with our parts
+        spriteRenderer.enabled = shouldBeVisible;
     }
-    #endregion
 
-    #region Hold判定核心逻辑
+    protected override void OnNoteUpdate(float currentTime)
+    {
+        if (!isHoldStarted)
+        {
+            foreach (var moveCmd in moveCommands) moveCmd.UpdateNotePosition(currentTime);
+            foreach (var shiftCmd in shiftCommands) shiftCmd.UpdateNotePosition(currentTime, Time.deltaTime);
+        }
+        else
+        {
+            noteData.x = holdFixedEndPos.x;
+            noteData.y = holdFixedEndPos.y;
+        }
+
+        UpdateCapsuleVisual(currentRectangleLength);
+        UpdateHoldJudge(currentTime);
+    }
+
     private void UpdateHoldJudge(float currentTime)
     {
         if (dropToCommand == null) return;
 
         if (!isHoldStarted)
         {
-            // 头部判定
             dropToCommand.Judge(currentTime, dropToCommand.KeyIndex);
-            var judgeResult = dropToCommand.judgeResult;
+            var result = dropToCommand.judgeResult;
 
-            if (judgeResult != JudgeResult.None && judgeResult != JudgeResult.Miss)
+            if (result != JudgeResult.None)
             {
-                isHoldStarted = true;
-                holdStartTime = currentTime;
-                SwitchJudgeSprite(judgeResult);
-
-                // 更新 UI 显示（头部判定分数和反馈）
-                if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(judgeResult);
-                if (ScoreDisplay.Instance != null) ScoreDisplay.Instance.AddScoreByJudge(judgeResult);
-                if (ComboDisplay.Instance != null) ComboDisplay.Instance.AddCombo();
-
-                // 立即将左半圆固定在终点（防止后续指令影响）
-                noteData.x = holdFixedEndPos.x;
-                noteData.y = holdFixedEndPos.y;
-                Debug.Log($"Hold音符{noteData.NoteIndex}开始长按，判定结果：{judgeResult}");
-            }
-            else if (judgeResult == JudgeResult.Miss)
-            {
-                SwitchJudgeSprite(JudgeResult.Miss);
-
-                // 更新 UI 显示（Miss 逻辑）
-                if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(JudgeResult.Miss);
-                if (ComboDisplay.Instance != null) ComboDisplay.Instance.ResetCombo();
-
-                noteData.isVisible = false;
-                gameObject.SetActive(false);
-                Debug.Log($"Hold音符{noteData.NoteIndex}初始按下超时 → Miss");
+                if (result != JudgeResult.Miss)
+                {
+                    isHoldStarted = true;
+                    holdStartTime = currentTime;
+                    SwitchJudgeSprite(result);
+                    UpdateGlobalUI(result);
+                    
+                    noteData.x = holdFixedEndPos.x;
+                    noteData.y = holdFixedEndPos.y;
+                }
+                else
+                {
+                    HandleHoldMiss();
+                }
             }
             return;
         }
 
         if (isHoldStarted && !isHoldCompleted)
         {
-            bool isKeyHeld = InputManager.Instance.IsGroupHeld(dropToCommand.KeyIndex);
+            bool isKeyHeld = InputManager.Instance != null && InputManager.Instance.IsGroupHeld(dropToCommand.KeyIndex);
             float elapsedHoldTime = currentTime - holdStartTime;
 
-            // 中断判定：只要松开按键立即判 Miss
             if (!isKeyHeld)
             {
-                dropToCommand.judgeResult = JudgeResult.Miss;
-                SwitchJudgeSprite(JudgeResult.Miss);
-
-                // 更新 UI 显示（中断 Miss）
-                if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(JudgeResult.Miss);
-                if (ComboDisplay.Instance != null) ComboDisplay.Instance.ResetCombo();
-
-                isHoldCompleted = true;
-                noteData.isVisible = false;
-                gameObject.SetActive(false);
-                Debug.Log($"Hold音符{noteData.NoteIndex}长按中断 → Miss");
+                HandleHoldMiss();
                 return;
             }
 
-            // 正常进度更新
             if (elapsedHoldTime < holdDuration)
             {
                 float progress = elapsedHoldTime / holdDuration;
                 currentRectangleLength = Mathf.Lerp(totalHoldLength, 0, progress);
             }
 
-            // 完成判定
             if (elapsedHoldTime >= holdDuration - holdCompleteThreshold)
             {
                 currentRectangleLength = 0;
                 isHoldCompleted = true;
-
-                // Hold 完成加分逻辑（可选：给一个 Perfect 反馈）
                 if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(JudgeResult.Perfect);
-                if (ScoreDisplay.Instance != null) ScoreDisplay.Instance.AddScore(500); // 完成额外加分
-
-                noteData.isVisible = false;
-                gameObject.SetActive(false);
-                Debug.Log($"Hold音符{noteData.NoteIndex}长按完成 → 最终判定：{dropToCommand.judgeResult}");
+                
+                // Set judgeResult to finish the note in BaseNote
+                judgeResult = JudgeResult.Perfect; 
             }
         }
     }
-    #endregion
 
-    #region 视觉效果处理
-    private void SwitchJudgeSprite(JudgeResult judgeResult)
+    private void HandleHoldMiss()
     {
-        Sprite semiSprite = judgeResult switch
+        judgeResult = JudgeResult.Miss;
+        isHoldCompleted = true;
+        SwitchJudgeSprite(JudgeResult.Miss);
+        UpdateGlobalUI(JudgeResult.Miss);
+    }
+
+    protected override void HandleJudgeResult(JudgeResult result)
+    {
+        // Hold manages its own completion/destruction flow
+        if (result == JudgeResult.Miss || (result == JudgeResult.Perfect && isHoldCompleted))
+        {
+            hasSwitchedSprite = true;
+            StartCoroutine(DelayDestroyNote());
+        }
+    }
+
+    protected override void SwitchJudgeSprite(JudgeResult result)
+    {
+        Sprite semiSprite = result switch
         {
             JudgeResult.Perfect => semiCirclePerfect,
             JudgeResult.Good => semiCircleGood,
@@ -286,119 +201,56 @@ public class Hold : MonoBehaviour
             _ => semiCircleDefault
         };
 
-        leftSemiCircle.sprite = semiSprite;
-        rightSemiCircle.sprite = semiSprite;
+        if (leftSemiCircle != null) leftSemiCircle.sprite = semiSprite;
+        if (rightSemiCircle != null) rightSemiCircle.sprite = semiSprite;
 
-        rectanglePart.sprite = judgeResult switch
+        if (rectanglePart != null)
         {
-            JudgeResult.Perfect => rectanglePerfect,
-            JudgeResult.Good => rectangleGood,
-            JudgeResult.Bad => rectangleBad,
-            JudgeResult.Miss => rectangleMiss,
-            _ => rectangleDefault
-        };
-
-        if (leftSemiCircle.sprite == null)
-            Debug.LogWarning($"Hold音符{noteData.NoteIndex} 半圆 {judgeResult} 精灵未赋值！");
-        if (rectanglePart.sprite == null)
-            Debug.LogWarning($"Hold音符{noteData.NoteIndex} 矩形 {judgeResult} 精灵未赋值！");
-
-        Debug.Log($"Hold音符{noteData.NoteIndex}切换精灵为：{judgeResult}");
+            rectanglePart.sprite = result switch
+            {
+                JudgeResult.Perfect => rectanglePerfect,
+                JudgeResult.Good => rectangleGood,
+                JudgeResult.Bad => rectangleBad,
+                JudgeResult.Miss => rectangleMiss,
+                _ => rectangleDefault
+            };
+        }
     }
 
     private void InitializeCapsuleComponents()
     {
-        // 左半圆
-        Transform leftChild = transform.Find("LeftSemiCircle");
-        if (leftChild == null)
-        {
-            GameObject leftObj = new GameObject("LeftSemiCircle");
-            leftObj.transform.SetParent(transform, false);
-            leftChild = leftObj.transform;
-        }
-        leftSemiCircle = leftChild.GetComponent<SpriteRenderer>();
-        if (leftSemiCircle == null)
-            leftSemiCircle = leftChild.gameObject.AddComponent<SpriteRenderer>();
-        leftSemiCircle.sprite = semiCircleDefault;
-        leftSemiCircle.sortingOrder = 1;  // 设置图层顺序为1
+        leftSemiCircle = CreatePart("LeftSemiCircle", semiCircleDefault);
+        rectanglePart = CreatePart("Rectangle", rectangleDefault);
+        rectangleTransform = rectanglePart.transform;
+        rightSemiCircle = CreatePart("RightSemiCircle", semiCircleDefault);
+    }
 
-        // 矩形
-        Transform rectChild = transform.Find("Rectangle");
-        if (rectChild == null)
+    private SpriteRenderer CreatePart(string name, Sprite defaultSprite)
+    {
+        Transform t = transform.Find(name);
+        if (t == null)
         {
-            GameObject rectObj = new GameObject("Rectangle");
-            rectObj.transform.SetParent(transform, false);
-            rectChild = rectObj.transform;
+            GameObject obj = new GameObject(name);
+            obj.transform.SetParent(transform, false);
+            t = obj.transform;
         }
-        rectanglePart = rectChild.GetComponent<SpriteRenderer>();
-        if (rectanglePart == null)
-            rectanglePart = rectChild.gameObject.AddComponent<SpriteRenderer>();
-        rectangleTransform = rectChild;
-        rectanglePart.sprite = rectangleDefault;
-        rectanglePart.sortingOrder = 1;   // 设置图层顺序为1
-
-        // 右半圆
-        Transform rightChild = transform.Find("RightSemiCircle");
-        if (rightChild == null)
-        {
-            GameObject rightObj = new GameObject("RightSemiCircle");
-            rightObj.transform.SetParent(transform, false);
-            rightChild = rightObj.transform;
-        }
-        rightSemiCircle = rightChild.GetComponent<SpriteRenderer>();
-        if (rightSemiCircle == null)
-            rightSemiCircle = rightChild.gameObject.AddComponent<SpriteRenderer>();
-        rightSemiCircle.sprite = semiCircleDefault;
-        rightSemiCircle.sortingOrder = 1; // 设置图层顺序为1
-
-        HideAllParts();
+        SpriteRenderer sr = t.GetComponent<SpriteRenderer>();
+        if (sr == null) sr = t.gameObject.AddComponent<SpriteRenderer>();
+        sr.sprite = defaultSprite;
+        sr.sortingOrder = 1;
+        sr.enabled = false;
+        return sr;
     }
 
     private void UpdateCapsuleVisual(float currentLength)
     {
         if (rectangleTransform == null) return;
-
         currentLength = Mathf.Max(currentLength, 0.01f);
-
-        // 矩形：中心位置 = 左半圆圆心 + direction * (currentLength/2)
         rectangleTransform.position = (Vector2)transform.position + holdDirection * (currentLength * 0.5f);
         rectangleTransform.rotation = Quaternion.FromToRotation(Vector3.right, holdDirection);
         rectangleTransform.localScale = new Vector3(currentLength, 1f, 1f);
-
-        // 右半圆：位置 = 左半圆圆心 + direction * currentLength
         rightSemiCircle.transform.position = (Vector2)transform.position + holdDirection * currentLength;
         rightSemiCircle.transform.rotation = Quaternion.FromToRotation(Vector3.right, -holdDirection);
-
-        // 左半圆：旋转使其开口指向 direction
         leftSemiCircle.transform.rotation = Quaternion.FromToRotation(Vector3.right, holdDirection);
     }
-
-    private void HideAllParts()
-    {
-        if (leftSemiCircle != null) leftSemiCircle.enabled = false;
-        if (rectanglePart != null) rectanglePart.enabled = false;
-        if (rightSemiCircle != null) rightSemiCircle.enabled = false;
-    }
-
-    private void ShowAllParts()
-    {
-        if (leftSemiCircle != null && !leftSemiCircle.enabled) leftSemiCircle.enabled = true;
-        if (rectanglePart != null && !rectanglePart.enabled) rectanglePart.enabled = true;
-        if (rightSemiCircle != null && !rightSemiCircle.enabled) rightSemiCircle.enabled = true;
-    }
-    #endregion
-
-    #region 外部接口
-    public JudgeResult GetHoldJudgeResult()
-    {
-        return dropToCommand?.judgeResult ?? JudgeResult.None;
-    }
-
-    public void ForceEndHold()
-    {
-        isHoldCompleted = true;
-        noteData.isVisible = false;
-        gameObject.SetActive(false);
-    }
-    #endregion
 }

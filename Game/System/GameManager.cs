@@ -1,4 +1,6 @@
 using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 using System.Collections;
 
 public class GameManager : MonoBehaviour
@@ -10,6 +12,12 @@ public class GameManager : MonoBehaviour
     public ChartRunner chartRunner; // 音符创建/管理
     public LoadChart chartLoader;   // 谱面加载/解析
     public string initialChartFileName = "chart.txt"; // 初始加载的谱面文件名
+
+    [Header("暂停菜单引用")]
+    public Button recoverButton;   // 恢复按钮
+    public Button quitButton;      // 退出按钮
+    public Button restartButton;   // 重新开始按钮
+    public string levelSceneName = "LevelScene"; // 关卡场景名
 
     // +++ BGM 新增：背景音乐播放器
     [Header("BGM 设置")]
@@ -41,14 +49,13 @@ public class GameManager : MonoBehaviour
             return Time.time - chartStartTime - pauseAccumulator;
         }
     }
-    public float debugCurrentPlayTime; // 可选：用于在Unity编辑器中实时显示当前播放时间（仅供调试）
+    public float debugCurrentPlayTime; // 用于在Unity编辑器中实时显示当前播放时间（仅供调试）
     private float pauseAccumulator = 0; // 暂停时长累计（抵消暂停的时间差）
     private float lastPauseTime = 0; // 上次暂停的时间
     private float pausedPlayTime = 0; // 新增：记录暂停瞬间的播放时间
 
     private void Awake()
     {
-        // 修复：严谨的单例模式（跨场景保留+防止重复创建）
         if (Instance == null)
         {
             Instance = this;
@@ -65,6 +72,31 @@ public class GameManager : MonoBehaviour
         
         // 校验核心引用
         ValidateCoreReferences();
+
+        // 初始化暂停菜单按钮
+        InitPauseMenu();
+    }
+
+    private void InitPauseMenu()
+    {
+        if (recoverButton != null)
+        {
+            recoverButton.onClick.RemoveAllListeners();
+            recoverButton.onClick.AddListener(TogglePlay);
+            recoverButton.gameObject.SetActive(false);
+        }
+        if (quitButton != null)
+        {
+            quitButton.onClick.RemoveAllListeners();
+            quitButton.onClick.AddListener(QuitToLevelScene);
+            quitButton.gameObject.SetActive(false);
+        }
+        if (restartButton != null)
+        {
+            restartButton.onClick.RemoveAllListeners();
+            restartButton.onClick.AddListener(RestartChart);
+            restartButton.gameObject.SetActive(false);
+        }
     }
 
     #region 初始化与校验
@@ -266,11 +298,10 @@ public class GameManager : MonoBehaviour
                 bgmAudioSource.UnPause();
             }
 
-            // 恢复播放时隐藏恢复按钮
-            if (RecoverButton.Instance != null)
-            {
-                RecoverButton.Instance.SetButtonVisible(false);
-            }
+            // 恢复播放时隐藏暂停菜单按钮
+            if (recoverButton != null) recoverButton.gameObject.SetActive(false);
+            if (quitButton != null) quitButton.gameObject.SetActive(false);
+            if (restartButton != null) restartButton.gameObject.SetActive(false);
         }
         else
         {
@@ -285,16 +316,49 @@ public class GameManager : MonoBehaviour
                 bgmAudioSource.Pause();
             }
 
-            // 暂停时显示恢复按钮
-            if (RecoverButton.Instance != null)
-            {
-                RecoverButton.Instance.SetButtonVisible(true);
-            }
+            // 暂停时显示暂停菜单按钮
+            if (recoverButton != null) recoverButton.gameObject.SetActive(true);
+            if (quitButton != null) quitButton.gameObject.SetActive(true);
+            if (restartButton != null) restartButton.gameObject.SetActive(true);
         }
     }
 
     /// <summary>
-    /// 停止播放（重置状态+可选清理音符）
+    /// 重新开始播放
+    /// </summary>
+    public void RestartChart()
+    {
+        // 先停止当前播放并清理
+        StopChart();
+
+        // 重置 UI 状态
+        if (recoverButton != null) recoverButton.gameObject.SetActive(false);
+        if (quitButton != null) quitButton.gameObject.SetActive(false);
+        if (restartButton != null) restartButton.gameObject.SetActive(false);
+
+        // 重新预创建音符（因为 StopChart 清理了它们）
+        PreCreateAllNotes();
+
+        // 重新开始播放
+        PlayChart();
+        Debug.Log("GameManager: 重新开始播放谱面");
+    }
+
+    /// <summary>
+    /// 退出到 LevelScene
+    /// </summary>
+    public void QuitToLevelScene()
+    {
+        // 停止当前播放（清理音符并停止 BGM）
+        StopChart();
+        
+        // 加载场景
+        SceneManager.LoadScene(levelSceneName);
+        Debug.Log($"GameManager: 退出并加载场景 {levelSceneName}");
+    }
+
+    /// <summary>
+    /// 停止播放（重置状态+清理音符+重置分数）
     /// </summary>
     public void StopChart()
     {
@@ -310,7 +374,19 @@ public class GameManager : MonoBehaviour
             bgmAudioSource.Stop();
         }
 
-        Debug.Log("GameManager: 谱面已停止，播放状态已重置");
+        // 清理所有音符对象
+        if (chartRunner != null)
+        {
+            chartRunner.ClearAllNotes();
+        }
+
+        // 重置分数显示
+        if (ScoreDisplay.Instance != null)
+        {
+            ScoreDisplay.Instance.ResetScore();
+        }
+
+        Debug.Log("GameManager: 谱面已停止，音符已清理，分数已重置");
     }
 
     /// <summary>
@@ -342,8 +418,8 @@ public class GameManager : MonoBehaviour
         debugCurrentPlayTime = CurrentPlayTime;
         if(CurrentPlayTime == -1) return; // 加载解析未完成时跳过输入检测
         
-        // 检测Esc键按下（GetKeyDown确保仅触发一次）+ 当前处于播放状态
-        if (Input.GetKeyDown(KeyCode.Escape) && IsPlaying)
+        // 检测Esc键按下（GetKeyDown确保仅触发一次）
+        if (Input.GetKeyDown(KeyCode.Escape))
         {
             TogglePlay(); // 执行暂停/恢复逻辑
             Debug.Log("GameManager: 检测到Esc键按下，执行TogglePlay()");

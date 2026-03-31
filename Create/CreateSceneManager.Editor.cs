@@ -35,11 +35,15 @@ public partial class CreateSceneManager
         selectedType = SelectedType.None;
         selectedCommand = null;
         selectedKeyData = null;
+        currentAddStep = AddStep.None;
 
         // 隐藏所有编辑控件
         keyIndexInputField.gameObject.SetActive(false);
         keyNameInputField.gameObject.SetActive(false);
         noteTypeInputField.gameObject.SetActive(false); // 隐藏类型输入框
+        if (changeNoteTypeBtn != null) changeNoteTypeBtn.gameObject.SetActive(false);
+        if (finishBtn != null) finishBtn.gameObject.SetActive(false);
+        if (moveOptionPanel != null) moveOptionPanel.SetActive(false);
 
         // 隐藏指令管理相关
         if (cmdModeToggleBtn != null) cmdModeToggleBtn.gameObject.SetActive(false);
@@ -62,51 +66,45 @@ public partial class CreateSceneManager
     {
         if (selectedCommand == null) return;
 
-        // 显示基本信息 (Tap 类型不输出 message)
-        if (selectedCommand.type == NoteType.Tap)
-        {
-            infoText.text = "";
-        }
-        else
-        {
-            string keyIndexText = selectedCommand.commandName == "drop_to" ? selectedCommand.key_name.ToString() : "null";
-            infoText.text = $"选中音符 [编号 {selectedCommand.num}] (不可编辑)\n" +
-                           $"keyindex: {keyIndexText} (可编辑)\n" +
-                           $"判定时间 (timeB): {selectedCommand.timeB}\n" +
-                           $"开始时间 (timeA): {selectedCommand.timeA}\n" +
-                           $"类型: {selectedCommand.type}\n" +
-                           $"位置: ({selectedCommand.x1}, {selectedCommand.y1})";
-        }
+        // 填充基本信息，但不强制显示详细 UI 框
+        infoText.text = $"选中音符 [编号 {selectedCommand.num}]\n" +
+                       $"判定时间: {selectedCommand.timeB}\n" +
+                       $"类型: {selectedCommand.type}";
 
-        // 填充时间输入框（显示判定时间）
-        timeInputField.gameObject.SetActive(true);
-        timeInputField.text = selectedCommand.timeB.ToString(CultureInfo.InvariantCulture);
-        if (timeSlider != null)
-        {
-            timeSlider.gameObject.SetActive(true);
-            timeSlider.onValueChanged.RemoveListener(OnTimeSliderChanged);
-            timeSlider.value = selectedCommand.timeB;
-            timeSlider.onValueChanged.AddListener(OnTimeSliderChanged);
-        }
-
-        // 显示并设置 keyIndex 输入框（仅当是 drop_to 指令时允许编辑）
-        bool canEditKeyIndex = (selectedCommand.commandName == "drop_to");
-        keyIndexInputField.gameObject.SetActive(canEditKeyIndex);
-        if (canEditKeyIndex)
-        {
-            keyIndexInputField.text = selectedCommand.key_name.ToString();
-        }
-
-        // 隐藏按键专用的输入框
+        // 隐藏不相关的输入框
+        timeInputField.gameObject.SetActive(false);
+        if (timeSlider != null) timeSlider.gameObject.SetActive(false);
+        keyIndexInputField.gameObject.SetActive(false);
         keyNameInputField.gameObject.SetActive(false);
-
-        // 切换 UI：隐藏下拉列表，显示类型输入框
+        noteTypeInputField.gameObject.SetActive(false);
         noteTypeDropdown.gameObject.SetActive(false);
-        noteTypeInputField.gameObject.SetActive(true);
-        noteTypeInputField.text = selectedCommand.type.ToString(); // 显示当前类型字符串
 
-        // 更新指令管理 UI
+        // 显示核心按钮
+        if (changeNoteTypeBtn != null) changeNoteTypeBtn.gameObject.SetActive(true);
+        if (finishBtn != null) finishBtn.gameObject.SetActive(true);
+
+        // 更新指令管理 UI（显示 Add/Delete 切换）
         UpdateCmdManagementUI();
+    }
+
+    private void OnChangeNoteTypeBtnClicked()
+    {
+        if (selectedType != SelectedType.Note || selectedCommand == null) return;
+        
+        // 循环切换类型
+        int nextType = ((int)selectedCommand.type + 1) % Enum.GetValues(typeof(NoteType)).Length;
+        selectedCommand.type = (NoteType)nextType;
+
+        // 更新精灵
+        SpriteRenderer sr = selectedObject.GetComponent<SpriteRenderer>();
+        if (sr != null)
+        {
+            int idx = GetNoteTypeIndex(selectedCommand.type);
+            if (idx >= 0 && idx < noteSprites.Length)
+                sr.sprite = noteSprites[idx];
+        }
+
+        UpdateInfoPanelForNote();
     }
 
     private void UpdateInfoPanelForKey()

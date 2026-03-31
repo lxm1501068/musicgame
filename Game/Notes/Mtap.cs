@@ -3,12 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 
-[RequireComponent(typeof(SpriteRenderer))]
-public class Mtap : MonoBehaviour
+public class Mtap : BaseNote
 {
-    [Header("核心关联")]
-    public NoteData noteData;
-
     [Header("Tap精灵配置")]
     public Sprite tapDefaultSprite;
     public Sprite tapPerfectSprite;
@@ -18,7 +14,6 @@ public class Mtap : MonoBehaviour
 
     [Header("判定规则")]
     public float maxTapInterval = 0.2f;
-    public float destroyDelay = 0.2f;
 
     [Header("UI引用")]
     public TMP_Text countText;
@@ -27,201 +22,116 @@ public class Mtap : MonoBehaviour
     private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
     private List<MoveCommand> moveCommands = new List<MoveCommand>();
 
-    private SpriteRenderer spriteRenderer;
-    private int totalTaps;
     private int remainingTaps;
-    private bool hasCompletedJudge = false;
     private bool isFirstTapJudged = false;
     private float lastTapTime = 0f;
-    private JudgeResult finalResult = JudgeResult.None;
     private bool isMissed = false;
 
-    private bool isCommandsInitialized = false;
-    private Coroutine destroyCoroutine;
-    private float firstCommandStartTime;
-
-    void Awake()
+    protected override void Awake()
     {
-        // 尝试自动获取同级 NoteData 组件
-        if (noteData == null)
-        {
-            noteData = GetComponent<NoteData>();
-        }
-
-        if (noteData == null)
-        {
-            Debug.LogError($"[{gameObject.name}] Mtap组件：NoteData未赋值且无法自动获取！");
-            enabled = false;
-            return;
-        }
-
-        spriteRenderer = GetComponent<SpriteRenderer>();
-        if (spriteRenderer == null)
-        {
-            spriteRenderer = gameObject.AddComponent<SpriteRenderer>();
-        }
-        
-        // 尝试自动获取或创建文本组件
+        base.Awake();
         InitCountText();
-
-        ResetMtapSprites();
+        if (spriteRenderer != null) spriteRenderer.sprite = tapDefaultSprite;
     }
 
     private void InitCountText()
     {
         if (countText != null) return;
-
-        // 1. 先尝试在子物体中寻找
         countText = GetComponentInChildren<TMP_Text>();
-
-        // 2. 如果没找到，则自动创建一个
         if (countText == null)
         {
             GameObject textObj = new GameObject("Mtap_CountText");
             textObj.transform.SetParent(transform);
-            textObj.transform.localPosition = new Vector3(0, 0, -0.1f); // 稍微偏前防止遮挡
+            textObj.transform.localPosition = new Vector3(0, 0, -0.1f);
             
             TextMeshPro tmp = textObj.AddComponent<TextMeshPro>();
             tmp.fontSize = 6;
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.color = Color.white;
 
-            // 核心修复：设置渲染层级，确保在音符图片之上
             var meshRenderer = textObj.GetComponent<MeshRenderer>();
             if (meshRenderer != null && spriteRenderer != null)
             {
                 meshRenderer.sortingLayerID = spriteRenderer.sortingLayerID;
                 meshRenderer.sortingOrder = spriteRenderer.sortingOrder + 1;
             }
-
             countText = tmp;
         }
     }
 
-    void Update()
+    protected override void InitCommands()
     {
-        if (GameManager.Instance == null) return;
-        
-        float currentTime = GameManager.Instance.CurrentPlayTime;
-        if (currentTime == -1) return;
-
-        if (!isCommandsInitialized)
+        if (noteData.commands == null || noteData.commands.Count == 0)
         {
-            InitCommands();
-            transform.position = new Vector2(noteData.x, noteData.y);
-            isCommandsInitialized = true;
-            
-            // 初始化点击次数
-            totalTaps = noteData.commands.Count > 0 && noteData.commands[0].hold_duration > 0 
-                ? (int)noteData.commands[0].hold_duration 
-                : 2; // 默认2次（兼容原Dtap）
-            remainingTaps = totalTaps;
-            UpdateCountText();
-        }
-
-        if (currentTime < firstCommandStartTime)
-        {
-            if (spriteRenderer != null) spriteRenderer.enabled = false;
-            if (countText != null) countText.enabled = false;
-            return;
-        }
-        else
-        {
-            if (spriteRenderer != null && !spriteRenderer.enabled) spriteRenderer.enabled = true;
-            if (countText != null && !countText.enabled) countText.enabled = true;
-        }
-
-        if (hasCompletedJudge)
-        {
-            SyncPosition();
+            Debug.Log($"[{noteData.NoteIndex}] Mtap组件：NoteData无关联的Command！");
+            firstCommandStartTime = 0f;
             return;
         }
 
-        ExecuteShiftCommands(currentTime);
-        ExecuteMoveCommands(currentTime);
+        firstCommandStartTime = noteData.commands[0].timeA;
+        Command cmd = noteData.commands[0];
+        dropToCommand = new DropToCommand(noteData, cmd, cmd.key_name);
+
+        if (cmd.x2 != 0 || cmd.y2 != 0)
+            shiftCommands.Add(new ShiftCommand(noteData, cmd));
+
+        if (!string.IsNullOrEmpty(cmd.json_filename))
+            moveCommands.Add(new MoveCommand(noteData, cmd));
+
+        int totalTaps = cmd.hold_duration > 0 ? (int)cmd.hold_duration : 2;
+        remainingTaps = totalTaps;
+        UpdateCountText();
+    }
+
+    protected override void UpdateVisibility(float currentTime)
+    {
+        base.UpdateVisibility(currentTime);
+        if (countText != null) countText.enabled = spriteRenderer.enabled;
+    }
+
+    protected override void OnNoteUpdate(float currentTime)
+    {
+        foreach (var shiftCmd in shiftCommands)
+            shiftCmd.UpdateNotePosition(currentTime, Time.deltaTime);
+
+        foreach (var moveCmd in moveCommands)
+            moveCmd.UpdateNotePosition(currentTime);
 
         if (!isFirstTapJudged)
         {
-            ExecuteDropToJudge(currentTime);
-            if (dropToCommand != null && dropToCommand.judgeResult != JudgeResult.None)
+            if (dropToCommand != null)
             {
-                isFirstTapJudged = true;
-                lastTapTime = currentTime;
-                finalResult = dropToCommand.judgeResult;
-                
-                if (finalResult == JudgeResult.Miss)
+                dropToCommand.Judge(currentTime, dropToCommand.KeyIndex);
+                if (dropToCommand.judgeResult != JudgeResult.None)
                 {
-                    isMissed = true;
-                    CompleteJudge();
-                }
-                else
-                {
-                    remainingTaps--;
-                    UpdateCountText();
-                    if (remainingTaps <= 0)
+                    isFirstTapJudged = true;
+                    lastTapTime = currentTime;
+                    judgeResult = dropToCommand.judgeResult;
+
+                    if (judgeResult == JudgeResult.Miss)
                     {
-                        CompleteJudge();
+                        isMissed = true;
+                    }
+                    else
+                    {
+                        remainingTaps--;
+                        UpdateCountText();
+                        if (remainingTaps <= 0)
+                        {
+                            // 保持当前判定结果
+                        }
+                        else
+                        {
+                            // 还没完，重置 judgeResult 让 BaseNote 别销毁我们
+                            judgeResult = JudgeResult.None;
+                        }
                     }
                 }
             }
         }
         else
         {
-            // 后续点击判定
             CheckSubsequentTaps(currentTime);
-        }
-
-        SyncPosition();
-    }
-
-    private void InitCommands()
-    {
-        if (noteData.commands == null || noteData.commands.Count == 0)
-        {
-            Debug.Log($"[{noteData.NoteIndex}] Mtap组件：NoteData无关联的Command！");
-            return;
-        }
-
-        firstCommandStartTime = noteData.commands[0].timeA;
-
-        Command cmd = noteData.commands[0];
-        dropToCommand = new DropToCommand(noteData, cmd, cmd.key_name);
-
-        if (cmd.x2 != 0 || cmd.y2 != 0)
-        {
-            shiftCommands.Add(new ShiftCommand(noteData, cmd));
-        }
-
-        if (!string.IsNullOrEmpty(cmd.json_filename))
-        {
-            moveCommands.Add(new MoveCommand(noteData, cmd));
-        }
-
-        if (dropToCommand == null)
-        {
-            Debug.LogError($"[{gameObject.name}] Mtap组件：未解析到DropTo指令！");
-            enabled = false;
-        }
-    }
-
-    private void ExecuteShiftCommands(float currentTime)
-    {
-        foreach (var shiftCmd in shiftCommands)
-            shiftCmd.UpdateNotePosition(currentTime, Time.deltaTime);
-    }
-
-    private void ExecuteMoveCommands(float currentTime)
-    {
-        foreach (var moveCmd in moveCommands)
-            moveCmd.UpdateNotePosition(currentTime);
-    }
-
-    private void ExecuteDropToJudge(float currentTime)
-    {
-        if (dropToCommand != null && noteData.commands.Count > 0)
-        {
-            Command cmd = noteData.commands[0];
-            dropToCommand.Judge(currentTime, cmd.key_name);
         }
     }
 
@@ -231,53 +141,25 @@ public class Mtap : MonoBehaviour
 
         float interval = currentTime - lastTapTime;
 
-        // 如果超过间隔未点击，判定为 Miss
         if (interval > maxTapInterval)
         {
             isMissed = true;
-            finalResult = JudgeResult.Miss;
-            CompleteJudge();
+            judgeResult = JudgeResult.Miss;
             return;
         }
 
-        // 检测按键
-        if (noteData.commands.Count > 0)
+        if (dropToCommand != null && InputManager.Instance != null && InputManager.Instance.IsGroupPressed(dropToCommand.KeyIndex))
         {
-            Command cmd = noteData.commands[0];
-            if (InputManager.Instance.IsGroupPressed(cmd.key_name))
+            lastTapTime = currentTime;
+            remainingTaps--;
+            UpdateCountText();
+            
+            if (remainingTaps <= 0)
             {
-                lastTapTime = currentTime;
-                remainingTaps--;
-                UpdateCountText();
-                
-                // 后续点击只要按到就是 Perfect
-                if (remainingTaps <= 0)
-                {
-                    CompleteJudge();
-                }
+                // 后续点击完成，使用第一次判定的结果（通常是 Perfect 或 Good）
+                judgeResult = dropToCommand.judgeResult;
             }
         }
-    }
-
-    private void CompleteJudge()
-    {
-        hasCompletedJudge = true;
-        SwitchJudgeSprites();
-        UpdateCountText();
-
-        // 更新 UI 显示
-        if (JudgeResultDisplay.Instance != null) JudgeResultDisplay.Instance.ShowJudgeResult(finalResult);
-        if (ScoreDisplay.Instance != null) ScoreDisplay.Instance.AddScoreByJudge(finalResult);
-        
-        if (ComboDisplay.Instance != null)
-        {
-            if (finalResult == JudgeResult.Perfect || finalResult == JudgeResult.Good)
-                ComboDisplay.Instance.AddCombo();
-            else if (finalResult == JudgeResult.Bad || finalResult == JudgeResult.Miss)
-                ComboDisplay.Instance.ResetCombo();
-        }
-
-        destroyCoroutine = StartCoroutine(DelayDestroyNote());
     }
 
     private void UpdateCountText()
@@ -288,22 +170,11 @@ public class Mtap : MonoBehaviour
         }
     }
 
-    private void SyncPosition()
-    {
-        if (noteData == null) return;
-        transform.position = new Vector2(noteData.x, noteData.y);
-    }
-
-    private void ResetMtapSprites()
-    {
-        if(spriteRenderer != null) spriteRenderer.sprite = tapDefaultSprite;
-    }
-
-    private void SwitchJudgeSprites()
+    protected override void SwitchJudgeSprite(JudgeResult result)
     {
         if (spriteRenderer == null) return;
 
-        spriteRenderer.sprite = finalResult switch
+        spriteRenderer.sprite = result switch
         {
             JudgeResult.Perfect => tapPerfectSprite,
             JudgeResult.Good => tapGoodSprite,
@@ -311,39 +182,5 @@ public class Mtap : MonoBehaviour
             JudgeResult.Miss => tapMissSprite,
             _ => tapDefaultSprite
         };
-    }
-
-    private IEnumerator DelayDestroyNote()
-    {
-        yield return new WaitForSeconds(destroyDelay);
-        Destroy(gameObject);
-    }
-
-    void OnDestroy()
-    {
-        if (destroyCoroutine != null) StopCoroutine(destroyCoroutine);
-        StopAllCoroutines();
-    }
-
-    public void ResetMtapState()
-    {
-        if (destroyCoroutine != null)
-        {
-            StopCoroutine(destroyCoroutine);
-            destroyCoroutine = null;
-        }
-        hasCompletedJudge = false;
-        isFirstTapJudged = false;
-        lastTapTime = 0f;
-        isMissed = false;
-        finalResult = JudgeResult.None;
-        isCommandsInitialized = false;
-
-        if (dropToCommand != null)
-            dropToCommand.judgeResult = JudgeResult.None;
-
-        ResetMtapSprites();
-        transform.position = new Vector2(noteData.x, noteData.y);
-        gameObject.SetActive(true);
     }
 }

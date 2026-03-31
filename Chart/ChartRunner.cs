@@ -87,6 +87,12 @@ public class ChartRunner : MonoBehaviour
 
         IsNotesPreCreated = true;
         Debug.Log($"ChartRunner: 所有音符预创建完成，共{allNotes.Count}个");
+
+        // 初始化得分系统
+        if (ScoreDisplay.Instance != null)
+        {
+            ScoreDisplay.Instance.Initialize(allNotes.Count);
+        }
     }
 
     /// <summary>
@@ -102,6 +108,26 @@ public class ChartRunner : MonoBehaviour
         noteData.x = cmd.x1;                   // 初始X坐标（从cmd的x1读取）
         noteData.y = cmd.y1;                   // 初始Y坐标（从cmd的y1读取）
         noteData.isVisible = false;            // 初始隐藏，待时机显示
+    }
+
+    /// <summary>
+    /// 清空所有已生成的音符对象（用于重新开始或切换谱面）
+    /// </summary>
+    public void ClearAllNotes()
+    {
+        if (allNotes != null)
+        {
+            foreach (GameObject noteObj in allNotes)
+            {
+                if (noteObj != null)
+                {
+                    Destroy(noteObj);
+                }
+            }
+            allNotes.Clear();
+        }
+        IsNotesPreCreated = false;
+        Debug.Log("ChartRunner: 所有音符已清理");
     }
     #endregion
 }

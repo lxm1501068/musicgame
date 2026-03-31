@@ -1,26 +1,37 @@
 using UnityEngine;
-using TMPro; // 若用UGUI Text则替换为using UnityEngine.UI;
+using TMPro;
 
 /// <summary>
 /// 得分显示组件
-/// 仅处理显示，得分计算逻辑由外部（如Tap.cs）调用SetScore传入
+/// 处理得分计算、Combo 计数以及 UI 显示。总分为 100,000。
 /// </summary>
 public class ScoreDisplay : MonoBehaviour
 {
-    [Header("UI配置")]
-    [Tooltip("显示得分的文本组件（TMP_Text/Text）")]
-    public TMP_Text scoreText; // 若用UGUI Text则改为public Text scoreText;
-    [Tooltip("得分文本的前缀（如“得分：”）")]
-    public string scorePrefix = "得分：";
-    [Tooltip("得分显示的位数补零（如6位：000000），0则不补零")]
-    public int scoreDigit = 6;
+    [Header("UI 配置 - 分数")]
+    public TMP_Text scoreText;
+    public string scorePrefix = "";
+    public int scoreDigit = 6; // 总分 10w，建议 6 位
+
+    [Header("UI 配置 - Combo")]
+    public TMP_Text comboText;
+    public string comboSuffix = " COMBO";
 
     [Header("平滑滚动")]
-    [Tooltip("分数滚动的速度（每秒增加的分数）")]
     public float scrollSpeed = 5000f;
 
-    private int currentScore = 0; // 目标得分
-    private float displayedScore = 0; // 当前显示的滚动得分
+    // 分数计算常量
+    private const float MAX_TOTAL_SCORE = 100000f;
+    private const float JUDGE_SCORE_RATIO = 0.9f; // 判定分占 90% (90,000)
+    private const float COMBO_SCORE_RATIO = 0.1f; // Combo 分占 10% (10,000)
+
+    // 运行时数据
+    private float currentScore = 0;
+    private float displayedScore = 0;
+    private int currentCombo = 0;
+    private int maxCombo = 0;
+    private int totalNotes = 0;
+    private float judgeScorePerNote = 0;
+    private float comboScorePerNote = 0;
 
     public static ScoreDisplay Instance { get; private set; }
 
@@ -36,8 +47,8 @@ public class ScoreDisplay : MonoBehaviour
 
     void Start()
     {
-        // 初始化显示0分
         UpdateScoreDisplay();
+        UpdateComboDisplay();
     }
 
     void Update()
@@ -50,63 +61,99 @@ public class ScoreDisplay : MonoBehaviour
     }
 
     /// <summary>
-    /// 根据判定结果计算并增加分数
+    /// 初始化谱面相关参数
+    /// </summary>
+    /// <param name="notesCount">谱面中的总音符数</param>
+    public void Initialize(int notesCount)
+    {
+        totalNotes = notesCount;
+        if (totalNotes > 0)
+        {
+            judgeScorePerNote = (MAX_TOTAL_SCORE * JUDGE_SCORE_RATIO) / totalNotes;
+            comboScorePerNote = (MAX_TOTAL_SCORE * COMBO_SCORE_RATIO) / totalNotes;
+        }
+        ResetScore();
+        Debug.Log($"ScoreDisplay: 初始化完成。总音符: {totalNotes}, 每音符判定分: {judgeScorePerNote:F2}, Combo分: {comboScorePerNote:F2}");
+    }
+
+    /// <summary>
+    /// 根据判定结果更新分数和 Combo
     /// </summary>
     public void AddScoreByJudge(JudgeResult result)
     {
-        int scoreToAdd = result switch
+        if (totalNotes <= 0) return;
+
+        float scoreToAdd = 0;
+
+        // 1. 计算判定分
+        float weight = result switch
         {
-            JudgeResult.Perfect => 1000,
-            JudgeResult.Good => 600,
-            JudgeResult.Bad => 200,
-            _ => 0
+            JudgeResult.Perfect => 1.0f,
+            JudgeResult.Good => 0.6f,
+            JudgeResult.Bad => 0.2f,
+            _ => 0f
         };
+        scoreToAdd += judgeScorePerNote * weight;
+
+        // 2. 更新 Combo 并计算 Combo 分
+        if (result == JudgeResult.Perfect || result == JudgeResult.Good)
+        {
+            currentCombo++;
+            maxCombo = Mathf.Max(maxCombo, currentCombo);
+            scoreToAdd += comboScorePerNote; // 只要不断 Combo 就给 Combo 分
+        }
+        else if (result == JudgeResult.Bad || result == JudgeResult.Miss)
+        {
+            currentCombo = 0; // 断 Combo
+        }
+
         AddScore(scoreToAdd);
+        UpdateComboDisplay();
     }
 
     /// <summary>
-    /// 外部调用：设置当前得分
-    /// </summary>
-    /// <param name="newScore">新得分</param>
-    public void SetScore(int newScore)
-    {
-        currentScore = Mathf.Max(0, newScore); // 确保得分非负
-        // 如果差距很大，立即同步一部分或者让滚动更自然
-    }
-
-    /// <summary>
-    /// 外部调用：增加得分（便捷方法）
+    /// 手动增加分数（用于特殊加分，如 Hold 持续加分）
     /// </summary>
     /// <param name="addScore">增加的分数</param>
-    public void AddScore(int addScore)
+    public void AddScore(float addScore)
     {
-        currentScore = Mathf.Max(0, currentScore + addScore);
+        currentScore += addScore;
+        // 确保不会因为浮点误差超过 1,000,000
+        currentScore = Mathf.Min(currentScore, MAX_TOTAL_SCORE);
     }
 
-    /// <summary>
-    /// 更新得分显示文本
-    /// </summary>
     private void UpdateScoreDisplay()
     {
+        if (scoreText == null) return;
         int scoreInt = Mathf.FloorToInt(displayedScore);
-        if (scoreDigit > 0)
+        scoreText.text = scorePrefix + scoreInt.ToString("D" + scoreDigit);
+    }
+
+    private void UpdateComboDisplay()
+    {
+        if (comboText == null) return;
+        
+        if (currentCombo > 0)
         {
-            // 补零显示（如6位：123 → 000123）
-            string scoreStr = scoreInt.ToString($"D{scoreDigit}");
-            scoreText.text = $"{scorePrefix}{scoreStr}";
+            comboText.gameObject.SetActive(true);
+            comboText.text = currentCombo.ToString() + comboSuffix;
         }
         else
         {
-            // 不补零显示
-            scoreText.text = $"{scorePrefix}{scoreInt}";
+            comboText.gameObject.SetActive(false);
         }
     }
 
-    // 供外部调用的重置方法（游戏重启/结算时）
+    /// <summary>
+    /// 重置分数和 Combo（用于重新开始）
+    /// </summary>
     public void ResetScore()
     {
         currentScore = 0;
         displayedScore = 0;
+        currentCombo = 0;
         UpdateScoreDisplay();
+        UpdateComboDisplay();
+        Debug.Log("ScoreDisplay: 分数与 Combo 已重置");
     }
 }

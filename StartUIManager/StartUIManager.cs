@@ -25,7 +25,8 @@ public class StartUIManager : MonoBehaviour
     [SerializeField] private string levelSceneName = "LevelScene";        // 关卡场景名
     [SerializeField] private string communitySceneName = "CommunityScene"; // 社区场景名
     [SerializeField] private string settingsSceneName = "SettingsScene";  // 设置场景名
-    [SerializeField] private string createSceneName = "CreateScene";      // 制作谱面场景名
+    [SerializeField] private string createSceneName = "CreateTableScene";      // 制作谱面列表场景名
+    [SerializeField] private string createEditorSceneName = "CreateScene"; // 制作谱面编辑器场景名
     
     [Header("警告")]
     [SerializeField] private GameObject warningPanel;    // 警告面板
