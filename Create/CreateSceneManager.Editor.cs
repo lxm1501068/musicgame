@@ -6,6 +6,7 @@ using UnityEngine.EventSystems;
 using System.Globalization;
 using TMPro;
 using System;
+using System.IO;
 
 public partial class CreateSceneManager
 {
@@ -183,6 +184,9 @@ public partial class CreateSceneManager
                 timeSlider.onValueChanged.AddListener(OnTimeSliderChanged);
             }
 
+            // 根据新的时间值更新所有对象的显示位置
+            UpdateObjectsPositionAtTime(newTimeB);
+
             if (selectedType != SelectedType.Note || selectedCommand == null) return;
 
             float duration = selectedCommand.timeB - selectedCommand.timeA;
@@ -200,6 +204,9 @@ public partial class CreateSceneManager
     {
         // 同步 InputField (触发 OnTimeChanged)
         timeInputField.text = value.ToString(CultureInfo.InvariantCulture);
+        
+        // 根据当前时间更新所有对象的显示位置
+        UpdateObjectsPositionAtTime(value);
     }
 
     private void OnKeyIndexChanged(string value)
@@ -244,4 +251,214 @@ public partial class CreateSceneManager
             UpdateInfoPanelForKey();
         }
     }
+
+    /// <summary>
+    /// 根据指定时间更新所有NoteObject和KeyObject的显示位置
+    /// </summary>
+    private void UpdateObjectsPositionAtTime(float time)
+    {
+        // 更新所有音符对象的位置
+        NoteObject[] noteObjects = FindObjectsOfType<NoteObject>();
+        foreach (NoteObject noteObj in noteObjects)
+        {
+            if (noteObj.command != null)
+            {
+                Vector2 position = CalculateNotePositionAtTime(noteObj.command, time);
+                noteObj.transform.position = new Vector3(position.x, position.y, planeZ);
+            }
+        }
+
+        // 更新所有按键对象的位置
+        KeyObject[] keyObjects = FindObjectsOfType<KeyObject>();
+        foreach (KeyObject keyObj in keyObjects)
+        {
+            if (keyObj.keyData != null)
+            {
+                Vector2 position = CalculateKeyPositionAtTime(keyObj.keyData, time);
+                keyObj.transform.position = new Vector3(position.x, position.y, planeZ);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 计算音符在指定时间的理论位置
+    /// </summary>
+    private Vector2 CalculateNotePositionAtTime(Command command, float time)
+    {
+        // 起始位置
+        Vector2 currentPos = new Vector2(command.x1, command.y1);
+
+        // 查找所有与此音符相关的移动指令（shift, move, drop_to）
+        var moveCommands = ChartData.Instance.commands
+            .Where(c => c.num == command.num && 
+                       (c.commandName == "shift" || c.commandName == "move" || c.commandName == "drop_to") &&
+                       c.timeA <= time)
+            .OrderBy(c => c.timeA);
+
+        foreach (var cmd in moveCommands)
+        {
+            switch (cmd.commandName)
+            {
+                case "shift":
+                    // Shift指令：线性移动到目标位置
+                    if (time >= cmd.timeA && time <= cmd.timeB && cmd.timeB > cmd.timeA)
+                    {
+                        float progress = Mathf.Clamp01((time - cmd.timeA) / (cmd.timeB - cmd.timeA));
+                        currentPos = Vector2.Lerp(new Vector2(cmd.x1, cmd.y1), new Vector2(cmd.x2, cmd.y2), progress);
+                    }
+                    else if (time > cmd.timeB)
+                    {
+                        // 移动完成后保持在目标位置
+                        currentPos = new Vector2(cmd.x2, cmd.y2);
+                    }
+                    break;
+
+                case "move":
+                    // Move指令：基于JSON文件的复杂移动路径
+                    if (!string.IsNullOrEmpty(cmd.json_filename) && time >= cmd.timeA)
+                    {
+                        Vector2 movePos = CalculateMovePositionFromJson(cmd.json_filename, time - cmd.timeA, currentPos);
+                        // 只有在成功解析时才更新位置
+                        if (movePos != currentPos + Vector2.one * 999999) // 特殊值表示失败
+                        {
+                            currentPos = movePos;
+                        }
+                    }
+                    break;
+
+                case "drop_to":
+                    // Drop_to指令：移动到指定按键位置
+                    if (time >= cmd.timeA && time <= cmd.timeB && cmd.timeB > cmd.timeA)
+                    {
+                        float progress = Mathf.Clamp01((time - cmd.timeA) / (cmd.timeB - cmd.timeA));
+                        currentPos = Vector2.Lerp(new Vector2(cmd.x1, cmd.y1), new Vector2(cmd.x2, cmd.y2), progress);
+                    }
+                    else if (time > cmd.timeB)
+                    {
+                        // 移动完成后保持在目标位置
+                        currentPos = new Vector2(cmd.x2, cmd.y2);
+                    }
+                    break;
+            }
+        }
+
+        return currentPos;
+    }
+
+    /// <summary>
+    /// 计算按键在指定时间的理论位置
+    /// </summary>
+    private Vector2 CalculateKeyPositionAtTime(KeyData keyData, float time)
+    {
+        // 起始位置
+        Vector2 currentPos = new Vector2(keyData.x, keyData.y);
+
+        // 检查所有按键指令，只处理移动相关的
+        if (keyData.keyCommands != null)
+        {
+            var moveCommands = keyData.keyCommands
+                .Where(c => (c.cmdType == "shift" || c.cmdType == "move") && c.startTime <= time)
+                .OrderBy(c => c.startTime);
+
+            foreach (var keyCmd in moveCommands)
+            {
+                switch (keyCmd.cmdType)
+                {
+                    case "shift":
+                        // Shift指令：线性移动
+                        if (time >= keyCmd.startTime && time <= keyCmd.endTime && keyCmd.endTime > keyCmd.startTime)
+                        {
+                            float progress = Mathf.Clamp01((time - keyCmd.startTime) / (keyCmd.endTime - keyCmd.startTime));
+                            currentPos = Vector2.Lerp(new Vector2(keyCmd.x1, keyCmd.y1), new Vector2(keyCmd.x2, keyCmd.y2), progress);
+                        }
+                        else if (time > keyCmd.endTime)
+                        {
+                            // 移动完成后保持在目标位置
+                            currentPos = new Vector2(keyCmd.x2, keyCmd.y2);
+                        }
+                        break;
+
+                    case "move":
+                        // Move指令：基于JSON文件的复杂移动路径
+                        if (!string.IsNullOrEmpty(keyCmd.json_filename) && time >= keyCmd.startTime)
+                        {
+                            Vector2 movePos = CalculateMovePositionFromJson(keyCmd.json_filename, time - keyCmd.startTime, currentPos);
+                            // 只有在成功解析时才更新位置
+                            if (movePos != currentPos + Vector2.one * 999999) // 特殊值表示失败
+                            {
+                                currentPos = movePos;
+                            }
+                        }
+                        break;
+                }
+            }
+        }
+
+        return currentPos;
+    }
+
+    /// <summary>
+    /// 从JSON文件计算移动位置
+    /// 如果JSON文件不存在或解析失败，返回特殊值表示失败
+    /// </summary>
+    private Vector2 CalculateMovePositionFromJson(string jsonFilename, float relativeTime, Vector2 currentPos)
+    {
+        try
+        {
+            string jsonPath = Path.Combine(Application.streamingAssetsPath, jsonFilename);
+            if (!File.Exists(jsonPath))
+            {
+                // JSON文件不存在，保持当前位置（返回特殊值）
+                Debug.LogWarning($"Move指令JSON文件不存在: {jsonPath}");
+                return currentPos + Vector2.one * 999999;
+            }
+
+            string jsonContent = File.ReadAllText(jsonPath);
+            
+            // 使用 MoveFrameList 的模式解析
+            var frameList = JsonUtility.FromJson<MoveFrameList>(jsonContent);
+
+            if (frameList != null && frameList.frames != null && frameList.frames.Count > 0)
+            {
+                // 找到当前时间对应的帧
+                MoveFrame prevFrame = null;
+                MoveFrame nextFrame = null;
+
+                foreach (var frame in frameList.frames)
+                {
+                    if (frame.time <= relativeTime)
+                    {
+                        prevFrame = frame;
+                    }
+                    else
+                    {
+                        nextFrame = frame;
+                        break;
+                    }
+                }
+
+                if (prevFrame == null)
+                {
+                    return new Vector2(frameList.frames[0].x, frameList.frames[0].y);
+                }
+                else if (nextFrame == null)
+                {
+                    return new Vector2(prevFrame.x, prevFrame.y);
+                }
+                else
+                {
+                    float progress = (relativeTime - prevFrame.time) / (nextFrame.time - prevFrame.time);
+                    return Vector2.Lerp(new Vector2(prevFrame.x, prevFrame.y), new Vector2(nextFrame.x, nextFrame.y), progress);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"解析移动JSON文件失败 {jsonFilename}: {e.Message}");
+        }
+
+        // 解析失败，返回特殊值
+        return currentPos + Vector2.one * 999999;
+    }
+
 }

@@ -99,16 +99,17 @@ public class ChartData : MonoBehaviour
         }
     }
 
-    // 序列化字段，方便在Inspector中查看/编辑
+    // 序列化字段，方便在 Inspector 中查看/编辑
     [Header("谱面核心数据")]
     public List<KeyData> keyDatas = new List<KeyData>();  // 按键初始状态
     public List<Command> commands = new List<Command>();  // 所有音符指令
+    public List<Line> lines = new List<Line>();           // 装饰性 Line 列表
     public float totalDuration;                           // 谱面总时长
     public int noteCount => commands?.Count ?? 0;        // 改为属性
     public int keyCount => keyDatas?.Count ?? 0;         // 改为属性
     [Header("运行时数据（无需手动编辑）")]
     public Dictionary<int, bool> isScorable = new Dictionary<int, bool>(); 
-    public List<int> keyIds = new List<int>(); // 存储轨道按键ID列表（对应chart.txt第二行的内容）
+    public List<int> keyIds = new List<int>(); // 存储轨道按键 ID 列表（对应 chart.txt 第二行的内容）
 
     // 防止重复创建单例（MonoBehaviour特有）
     private void Awake()
@@ -145,11 +146,45 @@ public class ChartData : MonoBehaviour
         keyIds.Clear();
     }
 
-    // 原有方法保留，仅修改ResetChartData：清空KeyData的指令列表
+    // 原有方法保留，仅修改 ResetChartData：清空 KeyData 的指令列表
     public void ResetChartData()
     {
-        // 复用ClearChartContent逻辑，避免代码冗余
+        // 复用 ClearChartContent 逻辑，避免代码冗余
         ClearChartContent();
+    }
+    
+    /// <summary>
+    /// 添加 Line 对象
+    /// </summary>
+    public void AddLine(Line line)
+    {
+        if (line != null)
+        {
+            lines.Add(line);
+        }
+    }
+    
+    /// <summary>
+    /// 应用所有 Line 的装饰效果到音符命令
+    /// </summary>
+    public void ApplyLineDecorations()
+    {
+        foreach (Line line in lines)
+        {
+            if (line != null)
+            {
+                line.ApplyDecorations(commands);
+            }
+        }
+        Debug.Log($"已应用 {lines.Count} 个 Line 的装饰效果");
+    }
+    
+    /// <summary>
+    /// 清空所有 Line
+    /// </summary>
+    public void ClearLines()
+    {
+        lines.Clear();
     }
 
     public void AddNoteData(Command newCommand)

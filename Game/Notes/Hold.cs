@@ -11,6 +11,7 @@ public class Hold : BaseNote
     private Transform rectangleTransform;
     private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
     private List<MoveCommand> moveCommands = new List<MoveCommand>();
+    private List<SpinCommand> spinCommands = new List<SpinCommand>();
     private DropToCommand dropToCommand;
     private float holdDuration;
     #endregion
@@ -83,6 +84,10 @@ public class Hold : BaseNote
             {
                 moveCommands.Add(new MoveCommand(noteData, cmd));
             }
+            else if (cmdName == "spin")
+            {
+                spinCommands.Add(new SpinCommand(noteData, cmd));
+            }
         }
     }
 
@@ -103,6 +108,7 @@ public class Hold : BaseNote
         {
             foreach (var moveCmd in moveCommands) moveCmd.UpdateNotePosition(currentTime);
             foreach (var shiftCmd in shiftCommands) shiftCmd.UpdateNotePosition(currentTime, Time.deltaTime);
+            foreach (var spinCmd in spinCommands) spinCmd.UpdateNoteRotation(currentTime);
         }
         else
         {

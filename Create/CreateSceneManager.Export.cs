@@ -66,7 +66,14 @@ public partial class CreateSceneManager
         }
 
         string json = JsonUtility.ToJson(frameList, true);
-        string path = Path.Combine(Application.streamingAssetsPath, fileName);
+        // 1. 修改JSON文件输出路径到 StreamingAssets/Create/
+        string createDirPath = Path.Combine(Application.streamingAssetsPath, "Create");
+        // 确保目录存在，不存在则创建
+        if (!Directory.Exists(createDirPath))
+        {
+            Directory.CreateDirectory(createDirPath);
+        }
+        string path = Path.Combine(createDirPath, fileName);
         
         try
         {
@@ -140,6 +147,9 @@ public partial class CreateSceneManager
                 case "shift":
                     line += $" {cmd.timeA:F3} {cmd.timeB:F3} {cmd.x1:F2} {cmd.y1:F2} {cmd.x2:F2} {cmd.y2:F2}";
                     break;
+                case "spin":
+                    line += $" {cmd.timeA:F3} {cmd.timeB:F3} {cmd.x1:F2} {cmd.y1:F2}";
+                    break;
                 case "flick_simple":
                     line += $" {cmd.timeA:F3} {cmd.timeB:F3}";
                     break;
@@ -170,7 +180,15 @@ public partial class CreateSceneManager
             }
         }
 
-        string path = Path.Combine(Application.streamingAssetsPath, fileName);
+        // 2. 修改chart.txt文件输出路径到 StreamingAssets/Create/
+        string createDirPath = Path.Combine(Application.streamingAssetsPath, "Create");
+        // 确保目录存在，不存在则创建
+        if (!Directory.Exists(createDirPath))
+        {
+            Directory.CreateDirectory(createDirPath);
+        }
+        string path = Path.Combine(createDirPath, fileName);
+        
         try
         {
             File.WriteAllText(path, sb.ToString());

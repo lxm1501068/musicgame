@@ -36,15 +36,16 @@ using UnityEngine.Networking;
 public class LoadChart : MonoBehaviour
 {
     private string chartContent; // 加载的谱面文本内容
-    private List<int> keyIds;    // 轨道按键ID列表（轨道按键部分解析）
+    private List<int> keyIds;    // 轨道按键 ID 列表（轨道按键部分解析）
     private int noteCount;       // 解析到的音符总数
     private int cmdCount;        // 解析到的指令总数
     private float totalDuration; // 解析到的谱面总时长
-    private List<string> _spectrumLines; // 本地缓存谱面行（替代ChartData的SpectrumLines）
+    private List<string> _spectrumLines; // 本地缓存谱面行（替代 ChartData 的 SpectrumLines）
+    private List<Line> parsedLines = new List<Line>(); // 解析到的 Line 列表
     
     // 兼容原有访问逻辑：轨道按键数=列表长度
     public int KeyCount => keyIds?.Count ?? 0;
-    // 对外提供轨道按键ID列表
+    // 对外提供轨道按键 ID 列表
     public List<int> KeyIds => keyIds ?? new List<int>();
     public string ChartContent => chartContent;
 
@@ -55,11 +56,6 @@ public class LoadChart : MonoBehaviour
     /// <returns>是否加载成功</returns>
     public async Task<bool> LoadChartFileAsync(string fileName)
     {
-        if (GameManager.Instance == null)
-        {
-            Debug.LogError("LoadChart.LoadChartFileAsync: GameManager.Instance 为空！");
-            return false;
-        }
 
         string path = Path.Combine(Application.streamingAssetsPath, fileName);
         Debug.Log($"开始加载谱面：{path}");
@@ -93,14 +89,22 @@ public class LoadChart : MonoBehaviour
             }
             else
             {
-                if (!File.Exists(path))
+                try
                 {
-                    Debug.LogError($"谱面文件不存在：{path}");
+                    if (!File.Exists(path))
+                    {
+                        Debug.LogError($"谱面文件不存在：{path}");
+                        return false;
+                    }
+
+                    // 异步读取文件（替代原同步ReadAllText）
+                    chartContent = await File.ReadAllTextAsync(path);
+                }
+                catch (IOException ex)
+                {
+                    Debug.LogError($"读取谱面文件时发生IO异常：{ex.Message} | 路径：{path}");
                     return false;
                 }
-
-                // 异步读取文件（替代原同步ReadAllText）
-                chartContent = await File.ReadAllTextAsync(path);
             }
 
             // 加载成功后预处理头部和行数据（保留原有逻辑）
@@ -299,19 +303,23 @@ public class LoadChart : MonoBehaviour
             Debug.LogError("ParseChart: 谱面内容为空，无法解析");
             return;
         }
-        
+            
         // 解析前先重置数据，避免切换谱面时数据残留
         ChartData.Instance.ResetChartData();
-        // 赋值轨道按键列表+数量到ChartData
+        // 赋值轨道按键列表 + 数量到 ChartData
         ChartData.Instance.keyIds = this.KeyIds;
         ChartData.Instance.totalDuration = totalDuration;
-        
+            
         // 使用本地缓存的谱面行解析
         ParseKeyInitialState(_spectrumLines);
         ParseCommands(_spectrumLines);
+        ParseLines(_spectrumLines);  // 新增：解析 Line 数据
         ChartData.Instance.SortCommandsByTime();
-        
-        Debug.Log($"LoadChart: 谱面解析完成: KeyData数={ChartData.Instance.keyDatas.Count} | Command数={ChartData.Instance.commands.Count}");
+            
+        // 应用所有 Line 的装饰效果
+        ChartData.Instance.ApplyLineDecorations();
+            
+        Debug.Log($"LoadChart: 谱面解析完成：KeyData 数={ChartData.Instance.keyDatas.Count} | Command 数={ChartData.Instance.commands.Count} | Line 数={ChartData.Instance.lines.Count}");
         return;
     }
 
@@ -415,6 +423,93 @@ public class LoadChart : MonoBehaviour
                     ParseKeyMoveCommand(parts);
                     break;
             }
+        }
+    }
+
+    /// <summary>
+    /// 解析 Line 数据（装饰性音符线）
+    /// </summary>
+    private void ParseLines(List<string> spectrumLines)
+    {
+        int lineStartIndex = -1;
+        
+        // 寻找 Line 标记行："// Line" 或 "Line:"
+        for (int i = 0; i < spectrumLines.Count; i++)
+        {
+            string line = spectrumLines[i].Trim();
+            if (line.StartsWith("// Line") || line.StartsWith("Line:"))
+            {
+                lineStartIndex = i + 1;
+                break;
+            }
+        }
+        
+        if (lineStartIndex == -1)
+        {
+            Debug.Log("ParseLines: 未找到 Line 定义，跳过解析");
+            return;
+        }
+        
+        // 解析 Line 定义
+        for (int i = lineStartIndex; i < spectrumLines.Count; i++)
+        {
+            string line = spectrumLines[i].Trim();
+            if (string.IsNullOrEmpty(line) || line.StartsWith("//")) continue;
+            if (line.StartsWith("谱面") || line.StartsWith("(note")) break;
+            
+            // 尝试解析 Line 定义格式：Line index start_time end_time [note_indices]
+            var parts = line.Split(new[] { ' ', '=' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 4 && parts[0].ToLower() == "line")
+            {
+                ParseLineDefinition(parts);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 解析单个 Line 定义
+    /// </summary>
+    private void ParseLineDefinition(string[] parts)
+    {
+        try
+        {
+            if (!int.TryParse(parts[1], out int lineIndex))
+            {
+                Debug.LogWarning($"ParseLineDefinition: Line 序号解析失败 - {parts[1]}");
+                return;
+            }
+            
+            if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float startTime))
+            {
+                Debug.LogWarning($"ParseLineDefinition: 开始时间解析失败 - {parts[2]}");
+                return;
+            }
+            
+            if (!float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float endTime))
+            {
+                Debug.LogWarning($"ParseLineDefinition: 结束时间解析失败 - {parts[3]}");
+                return;
+            }
+            
+            // 解析可选的音符序号列表
+            List<int> noteIndices = new List<int>();
+            for (int j = 4; j < parts.Length; j++)
+            {
+                if (int.TryParse(parts[j], out int noteIdx))
+                {
+                    noteIndices.Add(noteIdx);
+                }
+            }
+            
+            // 创建 Line 对象并添加到 ChartData
+            Line line = Line.CreateFromChartData(lineIndex, startTime, endTime, noteIndices);
+            ChartData.Instance.AddLine(line);
+            
+            Debug.Log($"ParseLineDefinition: 已解析 Line {lineIndex} | 时间：{startTime}-{endTime} | 音符数：{noteIndices.Count}");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"ParseLineDefinition 解析异常：{e.Message}\nLine 定义：{string.Join(" ", parts)}");
         }
     }
 
@@ -539,6 +634,18 @@ public class LoadChart : MonoBehaviour
                             float.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
                             float.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out x2);
                             float.TryParse(parts[9], NumberStyles.Float, CultureInfo.InvariantCulture, out y2);
+                        }
+                        break;
+                    case "spin":
+                        if (parts.Length >= 6)
+                        {
+                            float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeA);
+                            float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                        }
+                        if (parts.Length >= 8)
+                        {
+                            float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);  // init_direction
+                            float.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);  // degree (per second)
                         }
                         break;
                     default:

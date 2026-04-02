@@ -49,15 +49,9 @@ public partial class CreateSceneManager : MonoBehaviour
     [Header("Key Editor")]
     public TMP_InputField keyNameInputField;       // 用于编辑按键的 keyName (仅选中按键时显示)
 
-    [Header("Chart Settings")]
-    public Button settingsButton;                  // 打开/关闭设置面板的按钮
-    public GameObject settingsPanel;               // 设置面板（默认隐藏）
-    public TMP_InputField totalDurationInput;      // 总时长输入框
-    public TMP_InputField keyIdsInput;             // KeyIds 输入框（逗号分隔整数）
-    public Button confirmSettingsButton;           // 确认设置按钮
-
     [Header("General UI & Info")]
     public Button saveChartBtn;                    // 导出谱面按钮
+    public Button settingsButton;                  // 打开谱面设置场景的按钮
     public TextMeshProUGUI infoText;               // 显示选中对象信息
     public Camera mainCamera;
 
@@ -92,7 +86,7 @@ public partial class CreateSceneManager : MonoBehaviour
 
     // 指令管理状态
     private bool isAddMode = true; // 默认 Add 模式
-    public enum AddStep { None, Start, SelectType, InputTime, InputPos, InputMoveParams }
+    public enum AddStep { None, Start, SelectType, InputTime, InputPos, InputMoveParams, InputSpinParams }
     private AddStep currentAddStep = AddStep.None;
 
     private bool isCapturingStartPos = false;
@@ -158,13 +152,6 @@ public partial class CreateSceneManager : MonoBehaviour
         if (startPosInputField != null) startPosInputField.onEndEdit.AddListener(OnStartPosInputEndEdit);
         if (endPosInputField != null) endPosInputField.onEndEdit.AddListener(OnEndPosInputEndEdit);
 
-        // ---------- 初始化谱面设置 UI ----------
-        if (settingsButton != null)
-            settingsButton.onClick.AddListener(ToggleSettingsPanel);
-
-        if (confirmSettingsButton != null)
-            confirmSettingsButton.onClick.AddListener(OnConfirmSettings);
-
         // 获取要编辑的文件名（如果有）
         string editingFileName = PlayerPrefs.GetString("EditingChartFileName", "");
         
@@ -174,14 +161,17 @@ public partial class CreateSceneManager : MonoBehaviour
             saveChartBtn.onClick.AddListener(() => ExportChart(saveName));
         }
 
-        // 设置面板默认隐藏
-        if (settingsPanel != null)
-            settingsPanel.SetActive(false);
+        // 监听设置按钮点击，跳转到 ChartSettingScene
+        if (settingsButton != null)
+        {
+            settingsButton.onClick.RemoveAllListeners();
+            settingsButton.onClick.AddListener(OnSettingsButtonClicked);
+        }
 
         // 如果是编辑已有谱面，先加载
         if (!string.IsNullOrEmpty(editingFileName))
         {
-            infoText.text = $"正在加载谱面: {editingFileName}...";
+            infoText.text = $"正在加载谱面：{editingFileName}...";
             
             // 确保有 LoadChart 组件
             LoadChart loader = GetComponent<LoadChart>();
@@ -190,6 +180,7 @@ public partial class CreateSceneManager : MonoBehaviour
             // 清空旧数据
             ChartData.Instance.ResetChartData();
             
+            // editingFileName 已经包含完整相对路径（如"Create/chart.txt"）
             bool success = await loader.LoadChartFileAsync(editingFileName);
             if (success)
             {
@@ -207,11 +198,42 @@ public partial class CreateSceneManager : MonoBehaviour
             infoText.text = "新建谱面模式";
         }
 
-        // 从 ChartData 加载当前设置值到输入框
-        LoadChartSettingsToUI();
-
         // 新增：加载已有的音符和按键对象
         SpawnExistingObjects();
+    }
+
+    /// <summary>
+    /// 设置按钮点击回调：跳转到 ChartSettingScene
+    /// </summary>
+    private void OnSettingsButtonClicked()
+    {
+        // 保存当前编辑的谱面文件名，方便返回时使用
+        string editingFileName = PlayerPrefs.GetString("EditingChartFileName", "");
+        
+        // 在跳转前，先保存当前的谱面设置（可选）
+        SaveCurrentChartSettings();
+        
+        // 加载 ChartSettingScene
+        UnityEngine.SceneManagement.SceneManager.LoadScene("ChartSettingScene");
+        
+        Debug.Log($"CreateSceneManager: 跳转到谱面设置场景 | 当前编辑文件：{editingFileName}");
+    }
+
+    /// <summary>
+    /// 保存当前谱面设置到 PlayerPrefs（用于返回时恢复）
+    /// </summary>
+    private void SaveCurrentChartSettings()
+    {
+        // 保存总时长
+        PlayerPrefs.SetFloat("Chart_TotalDuration", ChartData.Instance.totalDuration);
+        
+        // 保存 KeyIds（转为逗号分隔的字符串）
+        string keyIdsStr = string.Join(",", ChartData.Instance.keyIds);
+        PlayerPrefs.SetString("Chart_KeyIds", keyIdsStr);
+        
+        PlayerPrefs.Save();
+        
+        Debug.Log($"CreateSceneManager: 已保存谱面设置 | 总时长：{ChartData.Instance.totalDuration} | KeyIds: [{keyIdsStr}]");
     }
 
     void Update()
@@ -225,7 +247,7 @@ public partial class CreateSceneManager : MonoBehaviour
             
             if (isCapturingStartPos)
             {
-                startPosBtn.GetComponentInChildren<TextMeshProUGUI>().text = $"起始: ({worldPos.x:F2}, {worldPos.y:F2})";
+                startPosBtn.GetComponentInChildren<TextMeshProUGUI>().text = $"起始：({worldPos.x:F2}, {worldPos.y:F2})";
                 if (startPosInputField != null) startPosInputField.text = $"{worldPos.x:F2}, {worldPos.y:F2}";
                 if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
                 {
@@ -236,7 +258,7 @@ public partial class CreateSceneManager : MonoBehaviour
             }
             else if (isCapturingEndPos)
             {
-                endPosBtn.GetComponentInChildren<TextMeshProUGUI>().text = $"终止: ({worldPos.x:F2}, {worldPos.y:F2})";
+                endPosBtn.GetComponentInChildren<TextMeshProUGUI>().text = $"终止：({worldPos.x:F2}, {worldPos.y:F2})";
                 if (endPosInputField != null) endPosInputField.text = $"{worldPos.x:F2}, {worldPos.y:F2}";
                 if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
                 {
@@ -280,7 +302,7 @@ public partial class CreateSceneManager : MonoBehaviour
                 // 动态更新预览精灵（处理 Ctrl 键切换 KeyObject/NoteObject）
                 UpdateFollowObjectSprite();
 
-                // 左键放置（非UI区域）
+                // 左键放置（非 UI 区域）
                 if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
                 {
                     if (currentMode == PlaceMode.Note)
@@ -304,7 +326,7 @@ public partial class CreateSceneManager : MonoBehaviour
                 ExitPlaceMode();
             }
         }
-        // 点击选择逻辑（仅在非放置模式或未点击UI时）
+        // 点击选择逻辑（仅在非放置模式或未点击 UI 时）
         else if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
         {
             Vector2 mousePos = mainCamera.ScreenToWorldPoint(Input.mousePosition);

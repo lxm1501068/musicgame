@@ -148,7 +148,7 @@ public partial class CreateSceneManager
                 cmdDropdown.gameObject.SetActive(true);
                 cmdDropdown.ClearOptions();
                 if (selectedType == SelectedType.Note)
-                    cmdDropdown.AddOptions(new List<string> { "shift", "move", "destroy", "drop_to" });
+                    cmdDropdown.AddOptions(new List<string> { "shift", "move", "destroy", "drop_to", "spin" });
                 else
                     cmdDropdown.AddOptions(new List<string> { "shift", "move", "hide", "show" });
                 
@@ -195,6 +195,14 @@ public partial class CreateSceneManager
 
                 if (confirmBtnText != null) confirmBtnText.text = "确认添加 (或点击选项)";
                 infoText.text = "步骤 3: 选择运动方式";
+                break;
+
+            case AddStep.InputSpinParams:
+                extraParamInputField.gameObject.SetActive(true);
+                extraParamInputField.placeholder.GetComponent<TextMeshProUGUI>().text = "init_direction degree_per_second";
+                
+                if (confirmBtnText != null) confirmBtnText.text = "完成添加";
+                infoText.text = "步骤 3: 输入旋转参数 (初始方向角度，每秒旋转度数)";
                 break;
         }
     }
@@ -307,6 +315,10 @@ public partial class CreateSceneManager
                     ExecuteAdd();
                     currentAddStep = AddStep.SelectType; // 完成后重置
                 }
+                else if (cmdName == "spin")
+                {
+                    currentAddStep = AddStep.InputSpinParams;
+                }
                 else
                 {
                     currentAddStep = AddStep.InputPos;
@@ -370,6 +382,16 @@ public partial class CreateSceneManager
             else if (cmdName == "move")
             {
                 newCmd.json_filename = extra;
+            }
+            else if (cmdName == "spin")
+            {
+                // x1 = init_direction, y1 = degree per second
+                string[] extraParts = extra.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (extraParts.Length >= 2)
+                {
+                    float.TryParse(extraParts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out newCmd.x1);
+                    float.TryParse(extraParts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out newCmd.y1);
+                }
             }
 
             ChartData.Instance.AddNoteData(newCmd);

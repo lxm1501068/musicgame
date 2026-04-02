@@ -131,7 +131,7 @@ public class MoveCommand
         }
         catch (Exception e)
         {
-            Debug.LogError($"解析JSON失败 ({jsonPath}): {e.Message}");
+            Debug.LogError($"解析 JSON 失败 ({jsonPath}): {e.Message}");
         }
         return null;
     }
@@ -168,6 +168,44 @@ public class MoveCommand
     }
 
     public static void ClearCache() => _jsonCache.Clear();
+}
+
+public class SpinCommand
+{
+    public float startTime;
+    public float endTime;
+    public float initDirection;  // 初始方向角度（度）
+    public float degreesPerSecond;  // 每秒旋转度数
+    public NoteData note;
+    private float startRotation;
+
+    public SpinCommand(NoteData note, Command cmd)
+    {
+        this.note = note;
+        this.startTime = cmd.timeA;
+        this.endTime = cmd.timeB;
+        this.initDirection = cmd.x1;  // x1 存储初始方向角度
+        this.degreesPerSecond = cmd.y1;  // y1 存储每秒旋转度数
+        this.startRotation = initDirection;
+    }
+
+    public void UpdateNoteRotation(float currentTime)
+    {
+        if (note == null || currentTime < startTime) return;
+
+        if (currentTime >= endTime)
+        {
+            // 旋转完成，保持在最终角度
+            float totalDegrees = degreesPerSecond * (endTime - startTime);
+            note.rotation = startRotation + totalDegrees;
+        }
+        else
+        {
+            // 正在旋转中
+            float elapsed = currentTime - startTime;
+            note.rotation = startRotation + (degreesPerSecond * elapsed);
+        }
+    }
 }
 
 public class NoteTools : MonoBehaviour

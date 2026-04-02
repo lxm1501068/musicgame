@@ -108,6 +108,7 @@ public abstract class BaseNote : MonoBehaviour
         if (noteData != null)
         {
             transform.position = new Vector2(noteData.x, noteData.y);
+            transform.rotation = Quaternion.Euler(0, 0, noteData.rotation);
         }
     }
 
