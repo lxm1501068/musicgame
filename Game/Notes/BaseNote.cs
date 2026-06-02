@@ -115,15 +115,9 @@ public abstract class BaseNote : MonoBehaviour
     protected virtual void HandleJudgeResult(JudgeResult result)
     {
         hasSwitchedSprite = true;
-        SwitchJudgeSprite(result);
         UpdateGlobalUI(result);
         StartCoroutine(DelayDestroyNote());
     }
-
-    /// <summary>
-    /// 根据判定结果切换精灵图片，由子类实现。
-    /// </summary>
-    protected abstract void SwitchJudgeSprite(JudgeResult result);
 
     protected virtual void UpdateGlobalUI(JudgeResult result)
     {
@@ -140,6 +134,29 @@ public abstract class BaseNote : MonoBehaviour
             else if (result == JudgeResult.Bad || result == JudgeResult.Miss)
                 ComboDisplay.Instance.ResetCombo();
         }
+
+        // 显示判定结果圆形（子类可以重写此行为）
+        ShowJudgeCircle(result);
+    }
+
+    /// <summary>
+    /// 显示判定结果圆形，子类可以重写以实现特殊逻辑
+    /// </summary>
+    protected virtual void ShowJudgeCircle(JudgeResult result)
+    {
+        if (JudgeCircleManager.Instance != null && noteData != null)
+        {
+            Vector2 keyPosition = new Vector2(noteData.x, noteData.y);
+            JudgeCircleManager.Instance.ShowJudgeCircle(keyPosition, result, IsHoldNote());
+        }
+    }
+
+    /// <summary>
+    /// 判断是否为Hold音符，子类可以重写
+    /// </summary>
+    protected virtual bool IsHoldNote()
+    {
+        return false;
     }
 
     protected virtual IEnumerator DelayDestroyNote()

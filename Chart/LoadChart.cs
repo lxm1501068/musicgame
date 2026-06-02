@@ -56,57 +56,21 @@ public class LoadChart : MonoBehaviour
     /// <returns>是否加载成功</returns>
     public async Task<bool> LoadChartFileAsync(string fileName)
     {
-
         string path = Path.Combine(Application.streamingAssetsPath, fileName);
         Debug.Log($"开始加载谱面：{path}");
         
         try
         {
-            // 分平台异步加载文件
-            if (Application.platform == RuntimePlatform.Android || Application.platform == RuntimePlatform.IPhonePlayer)
+            // PC端异步读取文件
+            if (!File.Exists(path))
             {
-                using (UnityWebRequest www = UnityWebRequest.Get(path))
-                {
-                    // 异步等待网络请求完成（替代原yield return）
-                    var requestOperation = www.SendWebRequest();
-                    while (!requestOperation.isDone)
-                    {
-                        await Task.Yield(); // 让出主线程，避免阻塞Unity渲染
-                    }
-
-#if UNITY_2020_1_OR_NEWER
-                    if (www.result != UnityWebRequest.Result.Success)
-#else
-                    if (!string.IsNullOrEmpty(www.error))
-#endif
-                    {
-                        Debug.LogError($"加载谱面失败：{www.error}");
-                        return false;
-                    }
-
-                    chartContent = www.downloadHandler.text;
-                }
-            }
-            else
-            {
-                try
-                {
-                    if (!File.Exists(path))
-                    {
-                        Debug.LogError($"谱面文件不存在：{path}");
-                        return false;
-                    }
-
-                    // 异步读取文件（替代原同步ReadAllText）
-                    chartContent = await File.ReadAllTextAsync(path);
-                }
-                catch (IOException ex)
-                {
-                    Debug.LogError($"读取谱面文件时发生IO异常：{ex.Message} | 路径：{path}");
-                    return false;
-                }
+                Debug.LogError($"谱面文件不存在：{path}");
+                return false;
             }
 
+            // 异步读取文件
+            chartContent = await File.ReadAllTextAsync(path);
+            
             // 加载成功后预处理头部和行数据（保留原有逻辑）
             if (!SplitChartContent(out List<string> trackKeyLines, out List<string> spectrumLines))
             {
@@ -265,6 +229,183 @@ public class LoadChart : MonoBehaviour
             totalDuration = totalTime;
         else Debug.LogError($"ParseChartHeader: 总时长解析失败，行内容：{trackKeyLines[3]}");
     }
+    
+    /// <summary>
+    /// 解析谱面设置信息（BPM、拍号、小节等）
+    /// </summary>
+    private void ParseChartSettings(List<string> spectrumLines)
+    {
+        // 重置默认值
+        ChartData.Instance.defaultBpm = 120f;
+        ChartData.Instance.defaultBeatsPerMeasure = 4;
+        ChartData.Instance.defaultBeatUnit = 4;
+        ChartData.Instance.measures.Clear();
+        
+        // 查找并解析设置行
+        for (int i = 0; i < spectrumLines.Count; i++)
+        {
+            string line = spectrumLines[i].Trim();
+            
+            // 解析默认 BPM
+            if (line.StartsWith("BPM:"))
+            {
+                string bpmStr = line.Substring(4).Trim();
+                if (float.TryParse(bpmStr, NumberStyles.Float, CultureInfo.InvariantCulture, out float bpm))
+                {
+                    ChartData.Instance.defaultBpm = bpm;
+                    Debug.Log($"加载默认 BPM: {bpm}");
+                }
+            }
+            // 解析默认拍号
+            else if (line.StartsWith("TimeSignature:"))
+            {
+                string tsStr = line.Substring(14).Trim();
+                string[] parts = tsStr.Split('/');
+                if (parts.Length == 2 && 
+                    int.TryParse(parts[0], out int beatsPerMeasure) && 
+                    int.TryParse(parts[1], out int beatUnit))
+                {
+                    ChartData.Instance.defaultBeatsPerMeasure = beatsPerMeasure;
+                    ChartData.Instance.defaultBeatUnit = beatUnit;
+                    Debug.Log($"加载默认拍号: {beatsPerMeasure}/{beatUnit}");
+                }
+            }
+            // 解析小节数量
+            else if (line.StartsWith("Measures:"))
+            {
+                string measureCountStr = line.Substring(9).Trim();
+                if (int.TryParse(measureCountStr, out int measureCount))
+                {
+                    Debug.Log($"加载小节数量: {measureCount}");
+                }
+            }
+            // 解析段落数量
+            else if (line.StartsWith("Sections:"))
+            {
+                string sectionCountStr = line.Substring(9).Trim();
+                if (int.TryParse(sectionCountStr, out int sectionCount))
+                {
+                    Debug.Log($"加载段落数量: {sectionCount}");
+                }
+            }
+            // 解析每个段落的详细信息
+            else if (line.StartsWith("Section:"))
+            {
+                // 格式: Section:0-4 BPM:120.00 TimeSig:4/4
+                try
+                {
+                    var parts = line.Split(' ');
+                    if (parts.Length >= 4)
+                    {
+                        // 解析小节范围 "0-4"
+                        string rangeStr = parts[0].Substring(8); // "Section:" 后是范围
+                        string[] rangeParts = rangeStr.Split('-');
+                        if (rangeParts.Length == 2 && 
+                            int.TryParse(rangeParts[0], out int startMeasure) && 
+                            int.TryParse(rangeParts[1], out int endMeasure))
+                        {
+                            float bpm = ChartData.Instance.defaultBpm;
+                            if (parts[1].StartsWith("BPM:"))
+                            {
+                                float.TryParse(parts[1].Substring(4), NumberStyles.Float, CultureInfo.InvariantCulture, out bpm);
+                            }
+                            
+                            int beatsPerMeasure = ChartData.Instance.defaultBeatsPerMeasure;
+                            int beatUnit = ChartData.Instance.defaultBeatUnit;
+                            if (parts[2].StartsWith("TimeSig:"))
+                            {
+                                string[] tsParts = parts[2].Substring(8).Split('/');
+                                if (tsParts.Length == 2)
+                                {
+                                    int.TryParse(tsParts[0], out beatsPerMeasure);
+                                    int.TryParse(tsParts[1], out beatUnit);
+                                }
+                            }
+                            
+                            // 为该段落范围内的所有小节创建 MeasureData
+                            for (int m = startMeasure; m <= endMeasure; m++)
+                            {
+                                var measure = new MeasureData(m, bpm, beatsPerMeasure, beatUnit);
+                                ChartData.Instance.measures.Add(measure);
+                            }
+                            
+                            Debug.Log($"加载段落: 小节 {startMeasure}-{endMeasure}, BPM: {bpm}, 拍号: {beatsPerMeasure}/{beatUnit}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"解析段落数据失败: {line}, 错误: {ex.Message}");
+                }
+            }
+        }
+        
+        // 如果没有找到段落数据，尝试查找旧格式的 Measure 数据（向后兼容）
+        if (ChartData.Instance.measures.Count == 0)
+        {
+            for (int i = 0; i < spectrumLines.Count; i++)
+            {
+                string line = spectrumLines[i].Trim();
+                if (line.StartsWith("Measure:"))
+                {
+                    try
+                    {
+                        var parts = line.Split(' ');
+                        if (parts.Length >= 4)
+                        {
+                            int measureIndex = int.Parse(parts[0].Substring(8));
+                            
+                            float bpm = ChartData.Instance.defaultBpm;
+                            if (parts[1].StartsWith("BPM:"))
+                            {
+                                float.TryParse(parts[1].Substring(4), NumberStyles.Float, CultureInfo.InvariantCulture, out bpm);
+                            }
+                            
+                            int beatsPerMeasure = ChartData.Instance.defaultBeatsPerMeasure;
+                            int beatUnit = ChartData.Instance.defaultBeatUnit;
+                            if (parts[2].StartsWith("TimeSig:"))
+                            {
+                                string[] tsParts = parts[2].Substring(8).Split('/');
+                                if (tsParts.Length == 2)
+                                {
+                                    int.TryParse(tsParts[0], out beatsPerMeasure);
+                                    int.TryParse(tsParts[1], out beatUnit);
+                                }
+                            }
+                            
+                            var measure = new MeasureData(measureIndex, bpm, beatsPerMeasure, beatUnit);
+                            ChartData.Instance.measures.Add(measure);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"解析小节数据失败: {line}, 错误: {ex.Message}");
+                    }
+                }
+            }
+        }
+        
+        // 如果仍然没有小节数据，根据默认值生成
+        if (ChartData.Instance.measures.Count == 0 && ChartData.Instance.totalDuration > 0)
+        {
+            float measureDuration = (60f / ChartData.Instance.defaultBpm) * ChartData.Instance.defaultBeatsPerMeasure;
+            int measureCount = Mathf.CeilToInt(ChartData.Instance.totalDuration / measureDuration);
+            
+            for (int i = 0; i < measureCount; i++)
+            {
+                var measure = new MeasureData(i, ChartData.Instance.defaultBpm, 
+                    ChartData.Instance.defaultBeatsPerMeasure, ChartData.Instance.defaultBeatUnit);
+                ChartData.Instance.measures.Add(measure);
+            }
+            
+            Debug.Log($"自动生成 {measureCount} 个小节数据");
+        }
+        
+        // 按小节索引排序
+        ChartData.Instance.measures.Sort((a, b) => a.measureIndex.CompareTo(b.measureIndex));
+        
+        Debug.Log($"谱面设置加载完成 | 默认BPM: {ChartData.Instance.defaultBpm} | 默认拍号: {ChartData.Instance.defaultBeatsPerMeasure}/{ChartData.Instance.defaultBeatUnit} | 小节数: {ChartData.Instance.measures.Count}");
+    }
 
     /// <summary>
     /// 解析轨道按键ID列表（兼容逗号/空格分隔）
@@ -309,6 +450,9 @@ public class LoadChart : MonoBehaviour
         // 赋值轨道按键列表 + 数量到 ChartData
         ChartData.Instance.keyIds = this.KeyIds;
         ChartData.Instance.totalDuration = totalDuration;
+        
+        // 解析谱面设置（BPM、拍号、小节等）
+        ParseChartSettings(_spectrumLines);
             
         // 使用本地缓存的谱面行解析
         ParseKeyInitialState(_spectrumLines);
@@ -647,6 +791,24 @@ public class LoadChart : MonoBehaviour
                             float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);  // init_direction
                             float.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);  // degree (per second)
                         }
+                        break;
+                    case "":
+                        // Tap 音符（无指令）：解析判定时间和初始位置
+                        // 格式：# tap 1 <timeB> <x1> <y1>
+                        if (parts.Length >= 5)
+                        {
+                            float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out timeB);
+                        }
+                        if (parts.Length >= 7)
+                        {
+                            float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out x1);
+                            float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out y1);
+                            // Tap 不需要 x2, y2，保持与 x1, y1 相同
+                            x2 = x1;
+                            y2 = y1;
+                        }
+                        // timeA 默认为 timeB - 1
+                        timeA = timeB - 1f;
                         break;
                     default:
                         Debug.LogWarning($"ParseNoteCommand: 未处理的note指令类型 {cmd}，按默认逻辑解析");

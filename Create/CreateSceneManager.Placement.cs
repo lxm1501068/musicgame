@@ -12,17 +12,31 @@ public partial class CreateSceneManager
     // ---------- 放置方法 ----------
     void PlaceNote(Vector3 worldPos)
     {
-        if (!float.TryParse(timeInputField.text, NumberStyles.Float, CultureInfo.InvariantCulture, out float chartTime))
+        // 从小节输入框获取小节序数
+        int measureIndex = 0;
+        if (measureInputField != null)
         {
-            infoText.text = "请输入有效的时间";
-            return;
+            int.TryParse(measureInputField.text, out measureIndex);
         }
+        
+        // 从节拍滑块获取节拍位置
+        float beatPosition = 0f;
+        if (beatSlider != null)
+        {
+            beatPosition = beatSlider.value;
+            
+            // 自动吸附到最近的 1/4 拍或 1/3 拍
+            beatPosition = SnapBeatPosition(beatPosition);
+        }
+        
+        // 计算实际时间
+        float chartTime = CalculateTimeFromMeasureAndBeat(measureIndex, beatPosition);
 
         Command newCmd = new Command
         {
             type = currentNoteType,
             num = GenerateNoteNumber(),
-            timeB = chartTime,             // 使用输入框中的时间作为判定时间 (timeB)
+            timeB = chartTime,             // 使用计算后的时间作为判定时间 (timeB)
             timeA = chartTime - 1f,        // 默认开始时间 (timeA) 为判定时间前 1s
             x1 = worldPos.x,
             y1 = worldPos.y,
@@ -30,7 +44,7 @@ public partial class CreateSceneManager
             y2 = worldPos.y,
             is_show = true,
             isNoteFirstTimeOccured = true,
-            commandName = (currentNoteType == NoteType.Tap) ? "" : "drop_to",
+            commandName = (currentNoteType == NoteType.Tap || currentNoteType == NoteType.Drag) ? "" : "drop_to",
             hold_duration = (currentNoteType == NoteType.Hold) ? 1f : 0f,
             key_name = 0 // 默认无关联按键
         };
@@ -47,7 +61,14 @@ public partial class CreateSceneManager
     {
         Vector3 worldPos = new Vector3(cmd.x1, cmd.y1, planeZ);
         GameObject noteObj = Instantiate(notePrefab, worldPos, Quaternion.identity);
-        NoteObject noteComp = noteObj.AddComponent<NoteObject>();
+        
+        // 获取已有的 NoteObject 组件（prefab 上应该已经有）
+        NoteObject noteComp = noteObj.GetComponent<NoteObject>();
+        if (noteComp == null)
+        {
+            // 如果 prefab 上没有，才添加
+            noteComp = noteObj.AddComponent<NoteObject>();
+        }
         noteComp.command = cmd;
 
         SpriteRenderer sr = noteObj.GetComponent<SpriteRenderer>();
@@ -60,7 +81,7 @@ public partial class CreateSceneManager
 
     void PlaceKeyObject(Vector3 worldPos)
     {
-        int keyId = 1; // 默认起始 ID
+        int keyId = 0; // 默认起始 ID
         if (ChartData.Instance.keyDatas.Count > 0)
         {
             keyId = ChartData.Instance.keyDatas.Max(k => k.keyName) + 1;
@@ -84,12 +105,19 @@ public partial class CreateSceneManager
     {
         Vector3 worldPos = new Vector3(keyData.x, keyData.y, planeZ);
         GameObject keyObj = Instantiate(keyPrefab, worldPos, Quaternion.identity);
-        KeyObject keyComp = keyObj.AddComponent<KeyObject>();
+        
+        // 获取已有的 KeyObject 组件（prefab 上应该已经有）
+        KeyObject keyComp = keyObj.GetComponent<KeyObject>();
+        if (keyComp == null)
+        {
+            // 如果 prefab 上没有，才添加
+            keyComp = keyObj.AddComponent<KeyObject>();
+        }
         keyComp.keyData = keyData;
 
         SpriteRenderer sr = keyObj.GetComponent<SpriteRenderer>();
-        if (sr != null && keyData.keyName >= 1 && keyData.keyName <= keySprites.Length)
-            sr.sprite = keySprites[keyData.keyName - 1];
+        if (sr != null && keyData.keyName >= 0 && keyData.keyName < keySprites.Length)
+            sr.sprite = keySprites[keyData.keyName];
     }
 
     // ---------- 放置模式控制 ----------

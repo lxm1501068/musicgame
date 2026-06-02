@@ -14,22 +14,8 @@ public class Hold : BaseNote
     private List<SpinCommand> spinCommands = new List<SpinCommand>();
     private DropToCommand dropToCommand;
     private float holdDuration;
+    private int keyIndex = -1; // 保存按键索引
     #endregion
-
-    #region Hold配置
-    [Header("Hold视觉配置 - 半圆")]
-    public Sprite semiCircleDefault;
-    public Sprite semiCirclePerfect;
-    public Sprite semiCircleGood;
-    public Sprite semiCircleBad;
-    public Sprite semiCircleMiss;
-
-    [Header("Hold视觉配置 - 矩形")]
-    public Sprite rectangleDefault;
-    public Sprite rectanglePerfect;
-    public Sprite rectangleGood;
-    public Sprite rectangleBad;
-    public Sprite rectangleMiss;
 
     private Vector2 holdDirection = Vector2.right;
     private float totalHoldLength = 2.0f;
@@ -39,7 +25,6 @@ public class Hold : BaseNote
     private float holdStartTime = 0;
     private Vector2 holdFixedEndPos;
     private float holdCompleteThreshold = 0.1f;
-    #endregion
 
     protected override void Awake()
     {
@@ -47,6 +32,7 @@ public class Hold : BaseNote
         InitializeCapsuleComponents();
         currentRectangleLength = totalHoldLength;
     }
+
 
     protected override void InitCommands()
     {
@@ -65,6 +51,7 @@ public class Hold : BaseNote
                 dropToCommand.goodThreshold = 0.25f;
                 dropToCommand.badThreshold = 0.35f;
                 holdDuration = cmd.hold_duration;
+                keyIndex = cmd.key_name; // 保存按键索引
 
                 Vector2 start = new Vector2(cmd.x1, cmd.y1);
                 Vector2 end = new Vector2(cmd.x2, cmd.y2);
@@ -135,7 +122,6 @@ public class Hold : BaseNote
                 {
                     isHoldStarted = true;
                     holdStartTime = currentTime;
-                    SwitchJudgeSprite(result);
                     UpdateGlobalUI(result);
                     
                     noteData.x = holdFixedEndPos.x;
@@ -182,7 +168,6 @@ public class Hold : BaseNote
     {
         judgeResult = JudgeResult.Miss;
         isHoldCompleted = true;
-        SwitchJudgeSprite(JudgeResult.Miss);
         UpdateGlobalUI(JudgeResult.Miss);
     }
 
@@ -192,43 +177,68 @@ public class Hold : BaseNote
         if (result == JudgeResult.Miss || (result == JudgeResult.Perfect && isHoldCompleted))
         {
             hasSwitchedSprite = true;
+            
+            // Hold结束时隐藏判定圆形
+            if (JudgeCircleManager.Instance != null)
+            {
+                JudgeCircleManager.Instance.HideHoldJudgeCircle();
+            }
+            
             StartCoroutine(DelayDestroyNote());
         }
     }
 
-    protected override void SwitchJudgeSprite(JudgeResult result)
+    /// <summary>
+    /// 显示判定结果圆形，重写以使用按键位置
+    /// </summary>
+    protected override void ShowJudgeCircle(JudgeResult result)
     {
-        Sprite semiSprite = result switch
+        if (JudgeCircleManager.Instance != null && noteData != null)
         {
-            JudgeResult.Perfect => semiCirclePerfect,
-            JudgeResult.Good => semiCircleGood,
-            JudgeResult.Bad => semiCircleBad,
-            JudgeResult.Miss => semiCircleMiss,
-            _ => semiCircleDefault
-        };
-
-        if (leftSemiCircle != null) leftSemiCircle.sprite = semiSprite;
-        if (rightSemiCircle != null) rightSemiCircle.sprite = semiSprite;
-
-        if (rectanglePart != null)
-        {
-            rectanglePart.sprite = result switch
-            {
-                JudgeResult.Perfect => rectanglePerfect,
-                JudgeResult.Good => rectangleGood,
-                JudgeResult.Bad => rectangleBad,
-                JudgeResult.Miss => rectangleMiss,
-                _ => rectangleDefault
-            };
+            // Hold音符的判定圈显示在按键位置上，而不是音符位置
+            Vector2 keyPosition = GetKeyPosition();
+            JudgeCircleManager.Instance.ShowJudgeCircle(keyPosition, result, true);
         }
     }
 
+    /// <summary>
+    /// 获取按键当前位置
+    /// </summary>
+    private Vector2 GetKeyPosition()
+    {
+        if (keyIndex < 0)
+        {
+            // 如果没有有效的按键索引，返回音符位置作为后备
+            return new Vector2(noteData.x, noteData.y);
+        }
+
+        // 查找场景中所有 Key_move 对象
+        Key_move[] allKeys = FindObjectsOfType<Key_move>();
+        foreach (var key in allKeys)
+        {
+            if (key.keyIndex == keyIndex)
+            {
+                return new Vector2(key.CurrentX, key.CurrentY);
+            }
+        }
+
+        // 如果找不到对应的按键，返回音符位置作为后备
+        Debug.LogWarning($"Hold: 未找到 keyIndex={keyIndex} 的按键，使用音符位置");
+        return new Vector2(noteData.x, noteData.y);
+    }
+
+    protected override bool IsHoldNote()
+    {
+        return true;
+    }
+
+
     private void InitializeCapsuleComponents()
     {
-        leftSemiCircle = CreatePart("LeftSemiCircle", semiCircleDefault);
-        rectanglePart = CreatePart("Rectangle", rectangleDefault);
+        leftSemiCircle = CreatePart("LeftSemiCircle", null);
+        rectanglePart = CreatePart("Rectangle", null);
         rectangleTransform = rectanglePart.transform;
-        rightSemiCircle = CreatePart("RightSemiCircle", semiCircleDefault);
+        rightSemiCircle = CreatePart("RightSemiCircle", null);
     }
 
     private SpriteRenderer CreatePart(string name, Sprite defaultSprite)
@@ -242,7 +252,8 @@ public class Hold : BaseNote
         }
         SpriteRenderer sr = t.GetComponent<SpriteRenderer>();
         if (sr == null) sr = t.gameObject.AddComponent<SpriteRenderer>();
-        sr.sprite = defaultSprite;
+        if (defaultSprite != null)
+            sr.sprite = defaultSprite;
         sr.sortingOrder = 1;
         sr.enabled = false;
         return sr;

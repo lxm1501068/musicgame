@@ -44,7 +44,7 @@ public partial class CreateSceneManager
         noteTypeInputField.gameObject.SetActive(false); // 隐藏类型输入框
         if (changeNoteTypeBtn != null) changeNoteTypeBtn.gameObject.SetActive(false);
         if (finishBtn != null) finishBtn.gameObject.SetActive(false);
-        if (moveOptionPanel != null) moveOptionPanel.SetActive(false);
+        if (moveTypeDropdown != null) moveTypeDropdown.gameObject.SetActive(false);
 
         // 隐藏指令管理相关
         if (cmdModeToggleBtn != null) cmdModeToggleBtn.gameObject.SetActive(false);
@@ -56,8 +56,17 @@ public partial class CreateSceneManager
         // 显示下拉列表，用于放置模式选择
         noteTypeDropdown.gameObject.SetActive(true);
         noteTypeDropdown.value = 0; // 重置为 (empty)
-        timeInputField.gameObject.SetActive(true); // 时间输入框保持显示（可用于放置时输入时间）
-        if (timeSlider != null) timeSlider.gameObject.SetActive(true);
+        
+        // 显示小节控制组件（小节输入和滑块）
+        if (measureInputField != null) measureInputField.gameObject.SetActive(true);
+        if (measureSlider != null) measureSlider.gameObject.SetActive(true);
+        if (beatInputField != null) beatInputField.gameObject.SetActive(true);
+        if (beatSlider != null) beatSlider.gameObject.SetActive(true);
+        
+        // 隐藏时间确认按钮并重置状态
+        if (timeConfirmBtn != null) timeConfirmBtn.gameObject.SetActive(false);
+        isTimeChanged = false;
+        pendingTime = 0f;
 
         // 清空信息文本，不显示任何消息
         infoText.text = "";
@@ -73,15 +82,26 @@ public partial class CreateSceneManager
                        $"类型: {selectedCommand.type}";
 
         // 隐藏不相关的输入框
-        timeInputField.gameObject.SetActive(false);
-        if (timeSlider != null) timeSlider.gameObject.SetActive(false);
+        if (measureInputField != null) measureInputField.gameObject.SetActive(false);
+        if (measureSlider != null) measureSlider.gameObject.SetActive(false);
+        if (beatInputField != null) beatInputField.gameObject.SetActive(false);
+        if (beatSlider != null) beatSlider.gameObject.SetActive(false);
         keyIndexInputField.gameObject.SetActive(false);
         keyNameInputField.gameObject.SetActive(false);
         noteTypeInputField.gameObject.SetActive(false);
         noteTypeDropdown.gameObject.SetActive(false);
 
         // 显示核心按钮
-        if (changeNoteTypeBtn != null) changeNoteTypeBtn.gameObject.SetActive(true);
+        if (changeNoteTypeBtn != null)
+        {
+            changeNoteTypeBtn.gameObject.SetActive(true);
+            // 更新按钮文本为当前音符类型
+            TextMeshProUGUI btnText = changeNoteTypeBtn.GetComponentInChildren<TextMeshProUGUI>();
+            if (btnText != null)
+            {
+                btnText.text = selectedCommand.type.ToString();
+            }
+        }
         if (finishBtn != null) finishBtn.gameObject.SetActive(true);
 
         // 更新指令管理 UI（显示 Add/Delete 切换）
@@ -105,6 +125,16 @@ public partial class CreateSceneManager
                 sr.sprite = noteSprites[idx];
         }
 
+        // 更新按钮文本为新类型
+        if (changeNoteTypeBtn != null)
+        {
+            TextMeshProUGUI btnText = changeNoteTypeBtn.GetComponentInChildren<TextMeshProUGUI>();
+            if (btnText != null)
+            {
+                btnText.text = selectedCommand.type.ToString();
+            }
+        }
+
         UpdateInfoPanelForNote();
     }
 
@@ -120,7 +150,7 @@ public partial class CreateSceneManager
         if (selectedKeyCommand != null)
         {
             infoText.text += $"\n\n当前指令: {selectedKeyCommand.cmdType}\n" +
-                            $"时间: {selectedKeyCommand.startTime} -> {selectedKeyCommand.endTime}\n" +
+                            $"时间: {selectedKeyCommand.startTime:F3} -> {selectedKeyCommand.endTime:F3}\n" +
                             $"起始: ({selectedKeyCommand.x1}, {selectedKeyCommand.y1})\n" +
                             $"终点: ({selectedKeyCommand.x2}, {selectedKeyCommand.y2})";
             if (!string.IsNullOrEmpty(selectedKeyCommand.json_filename))
@@ -135,14 +165,301 @@ public partial class CreateSceneManager
         keyIndexInputField.gameObject.SetActive(false);
         noteTypeInputField.gameObject.SetActive(false); // 隐藏类型输入框
         noteTypeDropdown.gameObject.SetActive(false);    // 隐藏下拉列表（按键无需类型）
-        timeInputField.gameObject.SetActive(false);     // 按键不需要时间编辑
-        if (timeSlider != null) timeSlider.gameObject.SetActive(false);
+        if (measureInputField != null) measureInputField.gameObject.SetActive(false);
+        if (measureSlider != null) measureSlider.gameObject.SetActive(false);
+        if (beatInputField != null) beatInputField.gameObject.SetActive(false);
+        if (beatSlider != null) beatSlider.gameObject.SetActive(false);     // 按键不需要小节编辑
 
         // 更新指令管理 UI
         UpdateCmdManagementUI();
     }
 
     // ---------- 编辑事件回调 ----------
+    
+    /// <summary>
+    /// 小节序数变化回调
+    /// </summary>
+    private void OnMeasureChanged(string value)
+    {
+        if (int.TryParse(value, out int measureIndex))
+        {
+            // 限制小节范围
+            int maxMeasure = ChartData.Instance.measureCount - 1;
+            if (measureIndex < 0) measureIndex = 0;
+            if (measureIndex > maxMeasure) measureIndex = maxMeasure;
+            
+            // 更新输入框显示（防止超出范围）
+            if (measureInputField != null && measureIndex.ToString() != value)
+            {
+                measureInputField.text = measureIndex.ToString();
+            }
+            
+            // 同步更新滑块
+            if (measureSlider != null)
+            {
+                measureSlider.onValueChanged.RemoveListener(OnMeasureSliderChanged);
+                measureSlider.value = measureIndex;
+                measureSlider.onValueChanged.AddListener(OnMeasureSliderChanged);
+            }
+            
+            // 更新节拍滑块的范围
+            UpdateBeatSliderRange(measureIndex);
+            
+            // 重置节拍位置为 0
+            if (beatInputField != null)
+            {
+                beatInputField.text = "0";
+            }
+            if (beatSlider != null)
+            {
+                beatSlider.onValueChanged.RemoveListener(OnBeatSliderChanged);
+                beatSlider.value = 0;
+                beatSlider.onValueChanged.AddListener(OnBeatSliderChanged);
+            }
+            
+            // 计算待确认的时间
+            pendingTime = CalculateCurrentTime();
+            isTimeChanged = true;
+            
+            // 显示确认按钮
+            if (timeConfirmBtn != null)
+            {
+                timeConfirmBtn.gameObject.SetActive(true);
+            }
+            
+            // 显示当前预览信息
+            MeasureData measure = GetMeasureData(measureIndex);
+            infoText.text = $"小节 {measureIndex} | 节拍: 0/{measure.beatsPerMeasure} | 时间: {pendingTime:F2}s\n请点击确认按钮更新预览";
+        }
+        else
+        {
+            infoText.text = "请输入有效的小节序数";
+        }
+    }
+    
+    /// <summary>
+    /// 小节滑块变化回调
+    /// </summary>
+    private void OnMeasureSliderChanged(float value)
+    {
+        int measureIndex = Mathf.RoundToInt(value);
+        
+        // 限制范围
+        int maxMeasure = ChartData.Instance.measureCount - 1;
+        if (measureIndex < 0) measureIndex = 0;
+        if (measureIndex > maxMeasure) measureIndex = maxMeasure;
+        
+        // 同步更新输入框
+        if (measureInputField != null)
+        {
+            measureInputField.text = measureIndex.ToString();
+        }
+        
+        // 更新节拍滑块的范围
+        UpdateBeatSliderRange(measureIndex);
+        
+        // 重置节拍位置为 0
+        if (beatInputField != null)
+        {
+            beatInputField.text = "0";
+        }
+        if (beatSlider != null)
+        {
+            beatSlider.onValueChanged.RemoveListener(OnBeatSliderChanged);
+            beatSlider.value = 0;
+            beatSlider.onValueChanged.AddListener(OnBeatSliderChanged);
+        }
+        
+        // 计算待确认的时间
+        pendingTime = CalculateCurrentTime();
+        isTimeChanged = true;
+        
+        // 显示确认按钮
+        if (timeConfirmBtn != null)
+        {
+            timeConfirmBtn.gameObject.SetActive(true);
+        }
+        
+        // 显示当前预览信息
+        MeasureData measure = GetMeasureData(measureIndex);
+        infoText.text = $"小节 {measureIndex} | 节拍: 0/{measure.beatsPerMeasure} | 时间: {pendingTime:F2}s\n请点击确认按钮更新预览";
+    }
+    
+    /// <summary>
+    /// 节拍输入框变化回调
+    /// </summary>
+    private void OnBeatInputChanged(string value)
+    {
+        if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float beatPosition))
+        {
+            // 获取当前小节的拍数
+            int measureIndex = 0;
+            if (measureInputField != null)
+            {
+                int.TryParse(measureInputField.text, out measureIndex);
+            }
+            
+            MeasureData measure = GetMeasureData(measureIndex);
+            
+            // 限制范围
+            if (beatPosition < 0) beatPosition = 0;
+            if (beatPosition > measure.beatsPerMeasure) beatPosition = measure.beatsPerMeasure;
+            
+            // 自动吸附到最近的 1/4 拍或 1/3 拍
+            beatPosition = SnapBeatPosition(beatPosition);
+            
+            // 更新输入框显示（防止超出范围或吸附后改变）
+            if (beatInputField != null)
+            {
+                string formattedValue = beatPosition.ToString("F2", CultureInfo.InvariantCulture);
+                if (value != formattedValue)
+                {
+                    beatInputField.text = formattedValue;
+                }
+            }
+            
+            // 同步更新滑块
+            if (beatSlider != null)
+            {
+                beatSlider.onValueChanged.RemoveListener(OnBeatSliderChanged);
+                beatSlider.value = beatPosition;
+                beatSlider.onValueChanged.AddListener(OnBeatSliderChanged);
+            }
+            
+            // 计算待确认的时间
+            pendingTime = CalculateTimeFromMeasureAndBeat(measureIndex, beatPosition);
+            isTimeChanged = true;
+            
+            // 显示确认按钮
+            if (timeConfirmBtn != null)
+            {
+                timeConfirmBtn.gameObject.SetActive(true);
+            }
+            
+            // 显示当前预览信息
+            infoText.text = $"小节 {measureIndex} | 节拍 {beatPosition:F2}/{measure.beatsPerMeasure} | 时间: {pendingTime:F2}s\n请点击确认按钮更新预览";
+        }
+        else
+        {
+            infoText.text = "请输入有效的节拍位置";
+        }
+    }
+    
+    /// <summary>
+    /// 节拍滑块变化回调
+    /// </summary>
+    private void OnBeatSliderChanged(float value)
+    {
+        // 获取当前小节
+        int measureIndex = 0;
+        if (measureInputField != null)
+        {
+            int.TryParse(measureInputField.text, out measureIndex);
+        }
+        
+        float beatPosition = value;
+        
+        // 自动吸附到最近的 1/4 拍或 1/3 拍
+        beatPosition = SnapBeatPosition(beatPosition);
+        
+        // 更新滑块值（可能因吸附而改变）
+        if (beatSlider != null)
+        {
+            beatSlider.onValueChanged.RemoveListener(OnBeatSliderChanged);
+            beatSlider.value = beatPosition;
+            beatSlider.onValueChanged.AddListener(OnBeatSliderChanged);
+        }
+        
+        // 同步更新输入框
+        if (beatInputField != null)
+        {
+            beatInputField.text = beatPosition.ToString("F2", CultureInfo.InvariantCulture);
+        }
+        
+        // 计算待确认的时间
+        pendingTime = CalculateTimeFromMeasureAndBeat(measureIndex, beatPosition);
+        isTimeChanged = true;
+        
+        // 显示确认按钮
+        if (timeConfirmBtn != null)
+        {
+            timeConfirmBtn.gameObject.SetActive(true);
+        }
+        
+        // 显示当前预览信息
+        MeasureData measure = GetMeasureData(measureIndex);
+        infoText.text = $"小节 {measureIndex} | 节拍 {beatPosition:F2}/{measure.beatsPerMeasure} | 时间: {pendingTime:F2}s\n请点击确认按钮更新预览";
+    }
+    
+    /// <summary>
+    /// 计算指定小节的起始时间
+    /// </summary>
+    private float CalculateMeasureStartTime(int measureIndex)
+    {
+        float totalTime = 0f;
+        
+        for (int i = 0; i < measureIndex && i < ChartData.Instance.measures.Count; i++)
+        {
+            totalTime += ChartData.Instance.CalculateMeasureDuration(ChartData.Instance.measures[i]);
+        }
+        
+        return totalTime;
+    }
+    
+    /// <summary>
+    /// 根据小节序数和节拍位置计算实际时间
+    /// </summary>
+    private float CalculateTimeFromMeasureAndBeat(int measureIndex, float beatPosition)
+    {
+        // 计算前面所有小节的总时间
+        float totalTime = CalculateMeasureStartTime(measureIndex);
+        
+        // 加上当前小节内的时间
+        MeasureData currentMeasure = GetMeasureData(measureIndex);
+        float timeInMeasure = beatPosition * (60f / currentMeasure.bpm);
+        
+        return totalTime + timeInMeasure;
+    }
+    
+    /// <summary>
+    /// 计算当前时间（基于小节和节拍位置）
+    /// </summary>
+    private float CalculateCurrentTime()
+    {
+        int measureIndex = 0;
+        float beatPosition = 0f;
+        
+        if (measureInputField != null)
+        {
+            int.TryParse(measureInputField.text, out measureIndex);
+        }
+        
+        if (beatSlider != null)
+        {
+            beatPosition = beatSlider.value;
+        }
+        
+        return CalculateTimeFromMeasureAndBeat(measureIndex, beatPosition);
+    }
+    
+    /// <summary>
+    /// 获取指定小节的 MeasureData
+    /// </summary>
+    private MeasureData GetMeasureData(int measureIndex)
+    {
+        if (ChartData.Instance.measures != null && measureIndex >= 0 && measureIndex < ChartData.Instance.measures.Count)
+        {
+            return ChartData.Instance.measures[measureIndex];
+        }
+        else
+        {
+            return new MeasureData(0, ChartData.Instance.defaultBpm, 
+                                  ChartData.Instance.defaultBeatsPerMeasure, 
+                                  ChartData.Instance.defaultBeatUnit);
+        }
+    }
+    
+
     // 类型输入框文本变化回调：更新选中音符的类型
     private void OnNoteTypeInputChanged(string value)
     {
@@ -172,42 +489,7 @@ public partial class CreateSceneManager
         }
     }
 
-    private void OnTimeChanged(string value)
-    {
-        if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float newTimeB))
-        {
-            // 同步 Slider (不触发 OnTimeSliderChanged)
-            if (timeSlider != null)
-            {
-                timeSlider.onValueChanged.RemoveListener(OnTimeSliderChanged);
-                timeSlider.value = newTimeB;
-                timeSlider.onValueChanged.AddListener(OnTimeSliderChanged);
-            }
 
-            // 根据新的时间值更新所有对象的显示位置
-            UpdateObjectsPositionAtTime(newTimeB);
-
-            if (selectedType != SelectedType.Note || selectedCommand == null) return;
-
-            float duration = selectedCommand.timeB - selectedCommand.timeA;
-            selectedCommand.timeB = newTimeB;
-            selectedCommand.timeA = newTimeB - (duration > 0 ? duration : 1f); // 保持持续时间或设为 1s
-            
-            // 新增：修改时间后重新排序
-            ChartData.Instance.SortCommandsByTime();
-            
-            UpdateInfoPanelForNote();
-        }
-    }
-
-    private void OnTimeSliderChanged(float value)
-    {
-        // 同步 InputField (触发 OnTimeChanged)
-        timeInputField.text = value.ToString(CultureInfo.InvariantCulture);
-        
-        // 根据当前时间更新所有对象的显示位置
-        UpdateObjectsPositionAtTime(value);
-    }
 
     private void OnKeyIndexChanged(string value)
     {
@@ -225,33 +507,99 @@ public partial class CreateSceneManager
 
         if (int.TryParse(value, out int newKeyId))
         {
-            // 新增：检查 ID 是否冲突
+            // 检查 ID 是否为非负数
+            if (newKeyId < 0)
+            {
+                infoText.text = "Key ID 必须为非负整数！";
+                return;
+            }
+
+            // 检查 ID 是否冲突（排除自身）
             if (ChartData.Instance.keyDatas.Any(k => k != selectedKeyData && k.keyName == newKeyId))
             {
                 infoText.text = $"Key ID {newKeyId} 已被其他按键使用！";
                 return;
             }
 
-            // 新增：同步更新关联该按键的音符
+            // 同步更新关联该按键的音符
             int oldKeyId = selectedKeyData.keyName;
+            int updatedCount = 0;
             foreach (var cmd in ChartData.Instance.commands)
             {
                 if (cmd.key_name == oldKeyId)
                 {
                     cmd.key_name = newKeyId;
+                    updatedCount++;
                 }
             }
 
             selectedKeyData.keyName = newKeyId;
 
+            // 更新精灵
             SpriteRenderer sr = selectedObject.GetComponent<SpriteRenderer>();
-            if (sr != null && newKeyId >= 1 && newKeyId <= keySprites.Length)
-                sr.sprite = keySprites[newKeyId - 1];
+            if (sr != null && newKeyId >= 0 && newKeyId < keySprites.Length)
+                sr.sprite = keySprites[newKeyId];
 
             UpdateInfoPanelForKey();
+            
+            if (updatedCount > 0)
+            {
+                infoText.text = $"已更新 Key ID 为 {newKeyId}，并更新了 {updatedCount} 个关联音符";
+            }
+            else
+            {
+                infoText.text = $"已更新 Key ID 为 {newKeyId}";
+            }
+        }
+        else
+        {
+            infoText.text = "请输入有效的整数 ID";
         }
     }
 
+    /// <summary>
+    /// 时间预览确认按钮点击回调
+    /// </summary>
+    private void OnTimeConfirmClicked()
+    {
+        if (!isTimeChanged)
+        {
+            infoText.text = "时间未更改";
+            return;
+        }
+        
+        // 更新对象位置
+        UpdateObjectsPositionAtTime(pendingTime);
+        
+        // 重置状态
+        isTimeChanged = false;
+        pendingTime = 0f;
+        
+        // 隐藏确认按钮
+        if (timeConfirmBtn != null)
+        {
+            timeConfirmBtn.gameObject.SetActive(false);
+        }
+        
+        // 显示成功信息
+        int measureIndex = 0;
+        if (measureInputField != null)
+        {
+            int.TryParse(measureInputField.text, out measureIndex);
+        }
+        float beatPosition = 0f;
+        if (beatSlider != null)
+        {
+            beatPosition = beatSlider.value;
+        }
+        MeasureData measure = GetMeasureData(measureIndex);
+        infoText.text = $"已更新预览 | 小节 {measureIndex} | 节拍 {beatPosition:F2}/{measure.beatsPerMeasure}";
+        
+        // Debug.Log($"OnTimeConfirmClicked: 已更新时间到实际值 {currentDisplayTime:F3}s");
+    }
+    
+
+    
     /// <summary>
     /// 根据指定时间更新所有NoteObject和KeyObject的显示位置
     /// </summary>
@@ -259,25 +607,150 @@ public partial class CreateSceneManager
     {
         // 更新所有音符对象的位置
         NoteObject[] noteObjects = FindObjectsOfType<NoteObject>();
+        int updatedNoteCount = 0;
         foreach (NoteObject noteObj in noteObjects)
         {
             if (noteObj.command != null)
             {
+                // 检查是否应该显示
+                bool shouldShow = ShouldShowNoteAtTime(noteObj.command, time);
+                
                 Vector2 position = CalculateNotePositionAtTime(noteObj.command, time);
                 noteObj.transform.position = new Vector3(position.x, position.y, planeZ);
+                
+                // 根据时间控制显示/隐藏
+                SpriteRenderer sr = noteObj.GetComponent<SpriteRenderer>();
+                if (sr != null)
+                {
+                    sr.enabled = shouldShow;
+                }
+                
+                updatedNoteCount++;
+                
+
             }
         }
 
         // 更新所有按键对象的位置
         KeyObject[] keyObjects = FindObjectsOfType<KeyObject>();
+        int updatedKeyCount = 0;
         foreach (KeyObject keyObj in keyObjects)
         {
             if (keyObj.keyData != null)
             {
                 Vector2 position = CalculateKeyPositionAtTime(keyObj.keyData, time);
+                
+                // 记录更新前的位置
+                Vector3 oldPos = keyObj.transform.position;
+                Vector3 oldLocalPos = keyObj.transform.localPosition;
+                Transform parent = keyObj.transform.parent;
+                
+                // 设置新位置
                 keyObj.transform.position = new Vector3(position.x, position.y, planeZ);
+                
+                // 记录更新后的位置
+                Vector3 newPos = keyObj.transform.position;
+                Vector3 newLocalPos = keyObj.transform.localPosition;
+                
+                // 检查 SpriteRenderer 状态
+                SpriteRenderer sr = keyObj.GetComponent<SpriteRenderer>();
+                bool srEnabled = (sr != null) ? sr.enabled : false;
+                Vector3 scale = keyObj.transform.localScale;
+                
+                updatedKeyCount++;
+                
+
             }
         }
+        
+        // 记录当前显示的时间
+        currentDisplayTime = time;
+        
+        // Debug.Log($"UpdateObjectsPositionAtTime({time:F2}s): 更新了 {updatedNoteCount} 个音符, {updatedKeyCount} 个按键");
+    }
+
+    /// <summary>
+    /// 判断音符是否可以被选中（未销毁且已到出现时间）
+    /// </summary>
+    private bool CanSelectNote(Command command)
+    {
+        if (command == null) return false;
+        
+        // 1. 检查是否已被销毁
+        if (IsNoteDestroyed(command))
+        {
+            return false;
+        }
+        
+        // 2. 检查是否已到出现时间（timeA是首次出现时间）
+        if (currentDisplayTime < command.timeA)
+        {
+            return false; // 还未到出现时间
+        }
+        
+        return true;
+    }
+
+    /// <summary>
+    /// 判断音符是否已被销毁（有destroy指令且当前时间已超过destroy时间）
+    /// </summary>
+    private bool IsNoteDestroyed(Command command)
+    {
+        if (command == null) return false;
+        
+        // 查找该音符的 destroy 指令
+        var destroyCmd = ChartData.Instance.commands
+            .FirstOrDefault(c => c.num == command.num && c.commandName == "destroy");
+        
+        // 如果有 destroy 指令且当前显示时间已超过 destroy 时间，则认为已销毁
+        if (destroyCmd != null && currentDisplayTime >= destroyCmd.timeA)
+        {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /// <summary>
+    /// 判断音符在指定时间是否应该显示
+    /// </summary>
+    private bool ShouldShowNoteAtTime(Command command, float time)
+    {
+        if (command == null) return false;
+        
+        // 1. 如果时间早于首次出现时间，不显示
+        if (time < command.timeA)
+            return false;
+        
+        // 2. 检查是否有 destroy 指令
+        var destroyCmd = ChartData.Instance.commands
+            .FirstOrDefault(c => c.num == command.num && c.commandName == "destroy");
+        
+        if (destroyCmd != null && time >= destroyCmd.timeA)
+            return false; // 已被销毁
+        
+        // 3. 检查是否有 drop_to 指令且已结束
+        var dropToCmds = ChartData.Instance.commands
+            .Where(c => c.num == command.num && c.commandName == "drop_to")
+            .OrderByDescending(c => c.timeB); // 按结束时间降序，取最后一个
+        
+        foreach (var dropToCmd in dropToCmds)
+        {
+            // 如果时间超过 drop_to 的结束时间，且没有后续指令，则不显示
+            if (time > dropToCmd.timeB)
+            {
+                // 检查是否有后续的 move 或 shift 指令
+                var hasSubsequentMove = ChartData.Instance.commands
+                    .Any(c => c.num == command.num && 
+                             (c.commandName == "move" || c.commandName == "shift") && 
+                             c.timeA >= dropToCmd.timeB);
+                
+                if (!hasSubsequentMove)
+                    return false; // drop_to 结束后没有后续移动，音符消失
+            }
+        }
+        
+        return true;
     }
 
     /// <summary>
@@ -285,7 +758,13 @@ public partial class CreateSceneManager
     /// </summary>
     private Vector2 CalculateNotePositionAtTime(Command command, float time)
     {
-        // 起始位置
+        if (command == null)
+        {
+            Debug.LogWarning("CalculateNotePositionAtTime: command 为 null");
+            return Vector2.zero;
+        }
+
+        // 默认位置：使用初始位置 (x1, y1)
         Vector2 currentPos = new Vector2(command.x1, command.y1);
 
         // 查找所有与此音符相关的移动指令（shift, move, drop_to）
@@ -318,11 +797,8 @@ public partial class CreateSceneManager
                     if (!string.IsNullOrEmpty(cmd.json_filename) && time >= cmd.timeA)
                     {
                         Vector2 movePos = CalculateMovePositionFromJson(cmd.json_filename, time - cmd.timeA, currentPos);
-                        // 只有在成功解析时才更新位置
-                        if (movePos != currentPos + Vector2.one * 999999) // 特殊值表示失败
-                        {
-                            currentPos = movePos;
-                        }
+                        // 更新位置（如果解析失败会返回原位置）
+                        currentPos = movePos;
                     }
                     break;
 
@@ -350,7 +826,7 @@ public partial class CreateSceneManager
     /// </summary>
     private Vector2 CalculateKeyPositionAtTime(KeyData keyData, float time)
     {
-        // 起始位置
+        // 默认位置：使用初始位置 (x, y)
         Vector2 currentPos = new Vector2(keyData.x, keyData.y);
 
         // 检查所有按键指令，只处理移动相关的
@@ -383,11 +859,8 @@ public partial class CreateSceneManager
                         if (!string.IsNullOrEmpty(keyCmd.json_filename) && time >= keyCmd.startTime)
                         {
                             Vector2 movePos = CalculateMovePositionFromJson(keyCmd.json_filename, time - keyCmd.startTime, currentPos);
-                            // 只有在成功解析时才更新位置
-                            if (movePos != currentPos + Vector2.one * 999999) // 特殊值表示失败
-                            {
-                                currentPos = movePos;
-                            }
+                            // 更新位置（如果解析失败会返回原位置）
+                            currentPos = movePos;
                         }
                         break;
                 }
@@ -399,7 +872,7 @@ public partial class CreateSceneManager
 
     /// <summary>
     /// 从JSON文件计算移动位置
-    /// 如果JSON文件不存在或解析失败，返回特殊值表示失败
+    /// 如果JSON文件不存在或解析失败，返回原位置
     /// </summary>
     private Vector2 CalculateMovePositionFromJson(string jsonFilename, float relativeTime, Vector2 currentPos)
     {
@@ -408,9 +881,9 @@ public partial class CreateSceneManager
             string jsonPath = Path.Combine(Application.streamingAssetsPath, jsonFilename);
             if (!File.Exists(jsonPath))
             {
-                // JSON文件不存在，保持当前位置（返回特殊值）
+                // JSON文件不存在，保持当前位置
                 Debug.LogWarning($"Move指令JSON文件不存在: {jsonPath}");
-                return currentPos + Vector2.one * 999999;
+                return currentPos;
             }
 
             string jsonContent = File.ReadAllText(jsonPath);
@@ -457,8 +930,8 @@ public partial class CreateSceneManager
             Debug.LogWarning($"解析移动JSON文件失败 {jsonFilename}: {e.Message}");
         }
 
-        // 解析失败，返回特殊值
-        return currentPos + Vector2.one * 999999;
+        // 解析失败，返回原位置
+        return currentPos;
     }
 
 }

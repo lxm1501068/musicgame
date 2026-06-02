@@ -32,6 +32,12 @@ public class ScoreDisplay : MonoBehaviour
     private int totalNotes = 0;
     private float judgeScorePerNote = 0;
     private float comboScorePerNote = 0;
+    
+    // 判定统计数据
+    public int PerfectCount { get; private set; } = 0;
+    public int GoodCount { get; private set; } = 0;
+    public int BadCount { get; private set; } = 0;
+    public int MissCount { get; private set; } = 0;
 
     public static ScoreDisplay Instance { get; private set; }
 
@@ -101,10 +107,18 @@ public class ScoreDisplay : MonoBehaviour
             currentCombo++;
             maxCombo = Mathf.Max(maxCombo, currentCombo);
             scoreToAdd += comboScorePerNote; // 只要不断 Combo 就给 Combo 分
+            
+            // 统计判定数
+            if (result == JudgeResult.Perfect) PerfectCount++;
+            else if (result == JudgeResult.Good) GoodCount++;
         }
         else if (result == JudgeResult.Bad || result == JudgeResult.Miss)
         {
             currentCombo = 0; // 断 Combo
+            
+            // 统计判定数
+            if (result == JudgeResult.Bad) BadCount++;
+            else if (result == JudgeResult.Miss) MissCount++;
         }
 
         AddScore(scoreToAdd);
@@ -152,8 +166,46 @@ public class ScoreDisplay : MonoBehaviour
         currentScore = 0;
         displayedScore = 0;
         currentCombo = 0;
+        PerfectCount = 0;
+        GoodCount = 0;
+        BadCount = 0;
+        MissCount = 0;
         UpdateScoreDisplay();
         UpdateComboDisplay();
         Debug.Log("ScoreDisplay: 分数与 Combo 已重置");
+    }
+    
+    /// <summary>
+    /// 获取最终得分（整数）
+    /// </summary>
+    public int GetFinalScore()
+    {
+        return Mathf.FloorToInt(currentScore);
+    }
+    
+    /// <summary>
+    /// 根据判定结果计算评级（AP/S/A/B/C/F）
+    /// </summary>
+    public string CalculateRank()
+    {
+        if (totalNotes <= 0) return "F";
+        
+        // AP (All Perfect): 全部是 Perfect
+        if (PerfectCount == totalNotes && GoodCount == 0 && BadCount == 0 && MissCount == 0)
+            return "AP";
+        
+        // 计算准确率
+        float accuracy = (PerfectCount * 1.0f + GoodCount * 0.6f + BadCount * 0.2f) / totalNotes;
+        
+        if (accuracy >= 0.95f && MissCount == 0)
+            return "S";
+        else if (accuracy >= 0.90f)
+            return "A";
+        else if (accuracy >= 0.80f)
+            return "B";
+        else if (accuracy >= 0.70f)
+            return "C";
+        else
+            return "F";
     }
 }

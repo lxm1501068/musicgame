@@ -7,11 +7,6 @@ public class Drag : BaseNote
     [Header("判定配置")]
     public float perfectThreshold = 0.1f;
 
-    [Header("判定对应的精灵图片")]
-    public Sprite defaultDragSprite;
-    public Sprite perfectDragSprite;
-    public Sprite missDragSprite;
-
     private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
     private List<MoveCommand> moveCommands = new List<MoveCommand>();
 
@@ -22,9 +17,8 @@ public class Drag : BaseNote
     protected override void Awake()
     {
         base.Awake();
-        if (defaultDragSprite != null)
-            spriteRenderer.sprite = defaultDragSprite;
     }
+
 
     protected override void InitCommands()
     {
@@ -100,16 +94,4 @@ public class Drag : BaseNote
         }
     }
 
-    protected override void SwitchJudgeSprite(JudgeResult result)
-    {
-        Sprite targetSprite = result switch
-        {
-            JudgeResult.Perfect => perfectDragSprite,
-            JudgeResult.Miss => missDragSprite,
-            _ => defaultDragSprite
-        };
-
-        if (targetSprite != null)
-            spriteRenderer.sprite = targetSprite;
-    }
 }

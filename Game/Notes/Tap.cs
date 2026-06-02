@@ -4,13 +4,6 @@ using System.Collections.Generic;
 
 public class Tap : BaseNote
 {
-    [Header("判定对应的精灵图片")]
-    public Sprite defaultTapSprite;
-    public Sprite perfectTapSprite;
-    public Sprite goodTapSprite;
-    public Sprite badTapSprite;
-    public Sprite missTapSprite;
-
     // 存储所有指令对象
     private List<ShiftCommand> shiftCommands = new List<ShiftCommand>();
     private List<MoveCommand> moveCommands = new List<MoveCommand>();
@@ -19,9 +12,8 @@ public class Tap : BaseNote
     protected override void Awake()
     {
         base.Awake();
-        if (defaultTapSprite != null)
-            spriteRenderer.sprite = defaultTapSprite;
     }
+
 
     protected override void InitCommands()
     {
@@ -72,20 +64,4 @@ public class Tap : BaseNote
         }
     }
 
-    protected override void SwitchJudgeSprite(JudgeResult result)
-    {
-        Sprite targetSprite = result switch
-        {
-            JudgeResult.Perfect => perfectTapSprite,
-            JudgeResult.Good => goodTapSprite,
-            JudgeResult.Bad => badTapSprite,
-            JudgeResult.Miss => missTapSprite,
-            _ => defaultTapSprite
-        };
-
-        if (targetSprite != null)
-            spriteRenderer.sprite = targetSprite;
-        else
-            spriteRenderer.sprite = defaultTapSprite;
-    }
 }

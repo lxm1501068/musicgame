@@ -5,13 +5,6 @@ using TMPro;
 
 public class Mtap : BaseNote
 {
-    [Header("Tap精灵配置")]
-    public Sprite tapDefaultSprite;
-    public Sprite tapPerfectSprite;
-    public Sprite tapGoodSprite;
-    public Sprite tapBadSprite;
-    public Sprite tapMissSprite;
-
     [Header("判定规则")]
     public float maxTapInterval = 0.2f;
 
@@ -31,8 +24,8 @@ public class Mtap : BaseNote
     {
         base.Awake();
         InitCountText();
-        if (spriteRenderer != null) spriteRenderer.sprite = tapDefaultSprite;
     }
+
 
     private void InitCountText()
     {
@@ -170,17 +163,4 @@ public class Mtap : BaseNote
         }
     }
 
-    protected override void SwitchJudgeSprite(JudgeResult result)
-    {
-        if (spriteRenderer == null) return;
-
-        spriteRenderer.sprite = result switch
-        {
-            JudgeResult.Perfect => tapPerfectSprite,
-            JudgeResult.Good => tapGoodSprite,
-            JudgeResult.Bad => tapBadSprite,
-            JudgeResult.Miss => tapMissSprite,
-            _ => tapDefaultSprite
-        };
-    }
 }

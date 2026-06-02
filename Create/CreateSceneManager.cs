@@ -16,8 +16,11 @@ public partial class CreateSceneManager : MonoBehaviour
 
     [Header("Placement Settings")]
     public TMP_Dropdown noteTypeDropdown;          // 用于选择要放置的音符类型
-    public TMP_InputField timeInputField;          // 用于编辑放置时间/选中音符的判定时间
-    public Slider timeSlider;                      // 用于滑动选择判定时间 (与 timeInputField 同步)
+    public TMP_InputField measureInputField;       // 用于输入小节序数（从0开始）
+    public Slider measureSlider;                   // 用于滑动选择小节序数
+    public TMP_InputField beatInputField;          // 用于输入小节内的节拍位置
+    public Slider beatSlider;                      // 用于滑动选择小节内的节拍位置
+    public Button timeConfirmBtn;                  // 时间预览确认按钮
 
     [Header("Note Editor")]
     public Button changeNoteTypeBtn;               // 更改音符类型按钮
@@ -41,10 +44,7 @@ public partial class CreateSceneManager : MonoBehaviour
     public TMP_InputField extraParamInputField;     // 额外参数输入框 (key_name, hold_dur, json_file 等)
 
     [Header("Move Command Special Options")]
-    public GameObject moveOptionPanel;             // 移动选项面板 (Harmonic, Parabolic, Circular)
-    public Button harmonicBtn;
-    public Button parabolicBtn;
-    public Button circularBtn;
+    public TMP_Dropdown moveTypeDropdown;          // 运动类型下拉菜单（Harmonic, Parabolic, Circular）
 
     [Header("Key Editor")]
     public TMP_InputField keyNameInputField;       // 用于编辑按键的 keyName (仅选中按键时显示)
@@ -94,18 +94,35 @@ public partial class CreateSceneManager : MonoBehaviour
     private Vector2 capturedStartPos;
     private Vector2 capturedEndPos;
 
+    // 时间预览相关
+    private bool isTimeChanged = false;      // 标记时间是否已更改但未确认
+    private float pendingTime = 0f;          // 待确认的时间值
+    private float currentDisplayTime = 0f;   // 当前实际显示的时间
+
     async void Start()
     {
         // 监听下拉列表变化：用于放置模式类型选择
         noteTypeDropdown.onValueChanged.AddListener(OnDropdownTypeSelected);
 
         // 监听输入框变化
-        timeInputField.onValueChanged.AddListener(OnTimeChanged);
-        if (timeSlider != null) timeSlider.onValueChanged.AddListener(OnTimeSliderChanged);
+        if (measureInputField != null) measureInputField.onEndEdit.AddListener(OnMeasureChanged);
+        if (measureSlider != null) measureSlider.onValueChanged.AddListener(OnMeasureSliderChanged);
+        if (beatInputField != null) beatInputField.onEndEdit.AddListener(OnBeatInputChanged);
+        if (beatSlider != null) beatSlider.onValueChanged.AddListener(OnBeatSliderChanged);
         keyIndexInputField.onValueChanged.AddListener(OnKeyIndexChanged);
         keyNameInputField.onValueChanged.AddListener(OnKeyNameChanged);
         noteTypeInputField.onValueChanged.AddListener(OnNoteTypeInputChanged);
         if (existingCmdsDropdown != null) existingCmdsDropdown.onValueChanged.AddListener(OnExistingCmdSelected);
+        
+        // 初始化时间确认按钮
+        if (timeConfirmBtn != null)
+        {
+            timeConfirmBtn.onClick.AddListener(OnTimeConfirmClicked);
+            timeConfirmBtn.gameObject.SetActive(false); // 初始隐藏
+        }
+        
+        // 初始化吸附相关 UI
+        InitializeSnapSettings();
 
         // 初始隐藏专用编辑框
         keyIndexInputField.gameObject.SetActive(false);
@@ -113,7 +130,7 @@ public partial class CreateSceneManager : MonoBehaviour
         noteTypeInputField.gameObject.SetActive(false);
         if (changeNoteTypeBtn != null) changeNoteTypeBtn.gameObject.SetActive(false);
         if (finishBtn != null) finishBtn.gameObject.SetActive(false);
-        if (moveOptionPanel != null) moveOptionPanel.SetActive(false);
+        if (moveTypeDropdown != null) moveTypeDropdown.gameObject.SetActive(false);
         
         // 初始隐藏指令管理相关
         if (cmdModeToggleBtn != null) cmdModeToggleBtn.gameObject.SetActive(false);
@@ -129,6 +146,32 @@ public partial class CreateSceneManager : MonoBehaviour
         // 初始化下拉选项
         noteTypeDropdown.ClearOptions();
         noteTypeDropdown.AddOptions(new List<string> { "(empty)", "Tap", "Hold", "DTap", "Flick", "Key", "Drag" });
+        
+        // 初始化小节输入框和滑块
+        if (measureInputField != null)
+        {
+            measureInputField.text = "0"; // 默认从第0小节开始
+        }
+        
+        // 初始化小节滑块
+        if (measureSlider != null)
+        {
+            measureSlider.minValue = 0;
+            measureSlider.maxValue = Mathf.Max(0, ChartData.Instance.measureCount - 1);
+            measureSlider.value = 0;
+            
+            // 添加监听器，确保在谱面数据改变时更新范围
+            measureSlider.onValueChanged.AddListener((value) => {
+                int maxMeasure = ChartData.Instance.measureCount - 1;
+                if (measureSlider.maxValue != maxMeasure)
+                {
+                    measureSlider.maxValue = maxMeasure;
+                }
+            });
+        }
+        
+        // 初始化节拍滑块
+        InitializeBeatSlider();
 
         // ---------- 初始化指令管理 UI ----------
         if (cmdModeToggleBtn != null)
@@ -143,9 +186,8 @@ public partial class CreateSceneManager : MonoBehaviour
         if (changeNoteTypeBtn != null)
             changeNoteTypeBtn.onClick.AddListener(OnChangeNoteTypeBtnClicked);
 
-        if (harmonicBtn != null) harmonicBtn.onClick.AddListener(() => OnMoveOptionSelected("harmonic"));
-        if (parabolicBtn != null) parabolicBtn.onClick.AddListener(() => OnMoveOptionSelected("parabolic"));
-        if (circularBtn != null) circularBtn.onClick.AddListener(() => OnMoveOptionSelected("circular"));
+        // 初始化运动类型下拉菜单
+        InitializeMoveTypeDropdown();
 
         if (startPosBtn != null) startPosBtn.onClick.AddListener(OnStartPosBtnClicked);
         if (endPosBtn != null) endPosBtn.onClick.AddListener(OnEndPosBtnClicked);
@@ -158,7 +200,7 @@ public partial class CreateSceneManager : MonoBehaviour
         if (saveChartBtn != null)
         {
             string saveName = string.IsNullOrEmpty(editingFileName) ? "chart.txt" : editingFileName;
-            saveChartBtn.onClick.AddListener(() => ExportChart(saveName));
+            saveChartBtn.onClick.AddListener(() => ExportChartAndReturn(saveName));
         }
 
         // 监听设置按钮点击，跳转到 ChartSettingScene
@@ -200,6 +242,166 @@ public partial class CreateSceneManager : MonoBehaviour
 
         // 新增：加载已有的音符和按键对象
         SpawnExistingObjects();
+        
+        // 新增：初始化时间显示，将所有对象位置更新到时间 0
+        InitializeTimeDisplay();
+    }
+    
+    /// <summary>
+    /// 导出谱面并返回上一场景
+    /// </summary>
+    private void ExportChartAndReturn(string fileName = "chart.txt")
+    {
+        ExportChart(fileName);
+        
+        // 保存完成后返回上一场景（通常是CreateTableScene）
+        UnityEngine.SceneManagement.SceneManager.LoadScene("CreateTableScene");
+    }
+    
+    /// <summary>
+    /// 初始化时间显示，将所有对象位置更新到默认时间
+    /// </summary>
+    private void InitializeTimeDisplay()
+    {
+        // 设置默认小节为 0
+        if (measureInputField != null)
+        {
+            measureInputField.text = "0";
+        }
+        
+        // 设置小节滑块
+        if (measureSlider != null)
+        {
+            int maxMeasure = Mathf.Max(0, ChartData.Instance.measureCount - 1);
+            measureSlider.minValue = 0;
+            measureSlider.maxValue = maxMeasure;
+            measureSlider.value = 0;
+        }
+        
+        // 初始化节拍滑块
+        InitializeBeatSlider();
+        
+        // 更新所有对象到时间 0 的位置
+        float currentTime = CalculateCurrentTime();
+        UpdateObjectsPositionAtTime(currentTime);
+        
+        // Debug.Log($"InitializeTimeDisplay: 已初始化时间显示，谱面总时长: {ChartData.Instance.totalDuration}s, 小节数: {ChartData.Instance.measureCount}");
+    }
+    
+    /// <summary>
+    /// 初始化吸附设置 UI
+    /// </summary>
+    private void InitializeSnapSettings()
+    {
+        // 现在吸附逻辑固定为支持 1/4 拍和 1/3 拍（三连音）
+    }
+    
+    /// <summary>
+    /// 获取吸附间隔（始终支持 1/4 拍和 1/3 拍的精度）
+    /// </summary>
+    private float GetSnapInterval()
+    {
+        // 返回最小的吸附单位，以支持所有可能的节拍位置
+        // 1/4 拍 = 0.25
+        // 1/3 拍 ≈ 0.333...
+        // 为了同时支持两者，我们使用它们的最大公约数概念
+        // 实际上，我们会分别尝试两种吸附，选择最接近的
+        return 0f; // 返回值不使用，实际逻辑在 SnapBeatPosition 中
+    }
+    
+    /// <summary>
+    /// 将节拍位置吸附到最近的 1/4 拍或 1/3 拍
+    /// </summary>
+    private float SnapBeatPosition(float beatPosition)
+    {
+        // 计算吸附到 1/4 拍的位置
+        float snapToQuarter = Mathf.Round(beatPosition / 0.25f) * 0.25f;
+        
+        // 计算吸附到 1/3 拍的位置（三连音）
+        float snapToThird = Mathf.Round(beatPosition / (1f/3f)) * (1f/3f);
+        
+        // 选择距离原始位置更近的吸附点
+        float distToQuarter = Mathf.Abs(beatPosition - snapToQuarter);
+        float distToThird = Mathf.Abs(beatPosition - snapToThird);
+        
+        return distToQuarter <= distToThird ? snapToQuarter : snapToThird;
+    }
+    
+    /// <summary>
+    /// 初始化节拍滑块
+    /// </summary>
+    private void InitializeBeatSlider()
+    {
+        if (beatSlider == null) return;
+        
+        // 获取当前小节的拍数
+        int measureIndex = 0;
+        if (measureInputField != null)
+        {
+            int.TryParse(measureInputField.text, out measureIndex);
+        }
+        
+        UpdateBeatSliderRange(measureIndex);
+        beatSlider.value = 0;
+        
+        // 同步更新节拍输入框
+        if (beatInputField != null)
+        {
+            beatInputField.text = "0";
+        }
+    }
+    
+    /// <summary>
+    /// 更新节拍滑块的范围为当前小节的总拍数
+    /// </summary>
+    private void UpdateBeatSliderRange(int measureIndex)
+    {
+        if (beatSlider == null) return;
+        
+        MeasureData measure;
+        if (ChartData.Instance.measures != null && measureIndex >= 0 && measureIndex < ChartData.Instance.measures.Count)
+        {
+            measure = ChartData.Instance.measures[measureIndex];
+        }
+        else
+        {
+            measure = new MeasureData(0, ChartData.Instance.defaultBpm, 
+                                    ChartData.Instance.defaultBeatsPerMeasure, 
+                                    ChartData.Instance.defaultBeatUnit);
+        }
+        
+        beatSlider.minValue = 0;
+        beatSlider.maxValue = measure.beatsPerMeasure;
+    }
+
+    /// <summary>
+    /// 初始化运动类型下拉菜单
+    /// </summary>
+    private void InitializeMoveTypeDropdown()
+    {
+        if (moveTypeDropdown == null) return;
+        
+        // 清除现有选项并添加运动类型
+        moveTypeDropdown.ClearOptions();
+        moveTypeDropdown.AddOptions(new List<string> { "Harmonic (简谐运动)", "Parabolic (抛物线)", "Circular (圆周运动)" });
+        moveTypeDropdown.value = 0; // 默认选择第一个
+        
+        // 监听下拉菜单变化
+        moveTypeDropdown.onValueChanged.AddListener(OnMoveTypeDropdownChanged);
+    }
+
+    /// <summary>
+    /// 运动类型下拉菜单变化回调
+    /// </summary>
+    private void OnMoveTypeDropdownChanged(int index)
+    {
+        if (currentAddStep != AddStep.InputMoveParams) return;
+        
+        string[] options = { "harmonic", "parabolic", "circular" };
+        if (index >= 0 && index < options.Length)
+        {
+            OnMoveOptionSelected(options[index]);
+        }
     }
 
     /// <summary>
@@ -216,7 +418,7 @@ public partial class CreateSceneManager : MonoBehaviour
         // 加载 ChartSettingScene
         UnityEngine.SceneManagement.SceneManager.LoadScene("ChartSettingScene");
         
-        Debug.Log($"CreateSceneManager: 跳转到谱面设置场景 | 当前编辑文件：{editingFileName}");
+        // Debug.Log($"CreateSceneManager: 跳转到谱面设置场景 | 当前编辑文件：{editingFileName}");
     }
 
     /// <summary>
@@ -233,7 +435,7 @@ public partial class CreateSceneManager : MonoBehaviour
         
         PlayerPrefs.Save();
         
-        Debug.Log($"CreateSceneManager: 已保存谱面设置 | 总时长：{ChartData.Instance.totalDuration} | KeyIds: [{keyIdsStr}]");
+        // Debug.Log($"CreateSceneManager: 已保存谱面设置 | 总时长：{ChartData.Instance.totalDuration} | KeyIds: [{keyIdsStr}]");
     }
 
     void Update()
@@ -341,7 +543,16 @@ public partial class CreateSceneManager : MonoBehaviour
 
                 if (noteComp != null)
                 {
-                    SelectNote(noteComp);
+                    // 检查音符是否应该可以被选中（未销毁且已到出现时间）
+                    if (CanSelectNote(noteComp.command))
+                    {
+                        SelectNote(noteComp);
+                    }
+                    else
+                    {
+                        // 音符已被销毁或还未出现，不选中
+                        Deselect();
+                    }
                 }
                 else if (keyComp != null)
                 {
@@ -382,6 +593,64 @@ public partial class CreateSceneManager : MonoBehaviour
         {
             UpdateFollowObjectSprite();
         }
+    }
+
+    /// <summary>
+    /// 公开方法：刷新所有对象在指定时间的位置显示
+    /// </summary>
+    public void RefreshDisplayAtTime(float time)
+    {
+        // 根据时间计算对应的小节
+        int measureIndex = ChartData.Instance.GetMeasureIndexAtTime(time);
+        
+        // 更新小节输入框
+        if (measureInputField != null)
+        {
+            measureInputField.text = measureIndex.ToString();
+        }
+        
+        // 更新小节滑块
+        if (measureSlider != null)
+        {
+            measureSlider.onValueChanged.RemoveListener(OnMeasureSliderChanged);
+            measureSlider.value = measureIndex;
+            measureSlider.onValueChanged.AddListener(OnMeasureSliderChanged);
+        }
+        
+        // 计算该小节内的节拍位置
+        float measureStartTime = CalculateMeasureStartTime(measureIndex);
+        float timeInMeasure = time - measureStartTime;
+        
+        MeasureData measure;
+        if (ChartData.Instance.measures != null && measureIndex >= 0 && measureIndex < ChartData.Instance.measures.Count)
+        {
+            measure = ChartData.Instance.measures[measureIndex];
+        }
+        else
+        {
+            measure = new MeasureData(0, ChartData.Instance.defaultBpm, 
+                                    ChartData.Instance.defaultBeatsPerMeasure, 
+                                    ChartData.Instance.defaultBeatUnit);
+        }
+        
+        float beatPosition = timeInMeasure * (measure.bpm / 60f);
+        
+        // 更新节拍输入框
+        if (beatInputField != null)
+        {
+            beatInputField.text = beatPosition.ToString("F2", CultureInfo.InvariantCulture);
+        }
+        
+        // 更新节拍滑块
+        if (beatSlider != null)
+        {
+            beatSlider.onValueChanged.RemoveListener(OnBeatSliderChanged);
+            beatSlider.value = beatPosition;
+            beatSlider.onValueChanged.AddListener(OnBeatSliderChanged);
+        }
+        
+        // 更新所有对象位置
+        UpdateObjectsPositionAtTime(time);
     }
 
     void OnDestroy()

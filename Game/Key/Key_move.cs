@@ -8,6 +8,7 @@ public class Key_move : MonoBehaviour
     [Header("核心配置")]
     public int keyIndex = 1;                // 按键序号（对应InputManager的按键组）
     public Sprite defaultKeySprite;         // 默认Key精灵
+    public Sprite pressedKeySprite;         // 按下时的Key精灵
     public bool isVisible = true;           // 是否显示
 
     #region 私有核心字段
@@ -54,6 +55,9 @@ public class Key_move : MonoBehaviour
         ExecuteMoveCommands(currentTime);
         ExecuteShowHideCommands(currentTime);
         SyncPosition();
+        
+        // 更新按键精灵状态
+        UpdateKeySprite();
     }
 
     void OnDestroy()
@@ -74,8 +78,8 @@ public class Key_move : MonoBehaviour
             return;
         }
 
+
         // 初始化组件 and 视觉状态
-        _spriteRenderer.sprite = defaultKeySprite;
         gameObject.SetActive(isVisible);
 
         // 加载ChartData中的Key数据
@@ -91,6 +95,7 @@ public class Key_move : MonoBehaviour
 
         _isInitialized = true;
     }
+
 
     /// <summary>
     /// 校验Key合法性（是否在ChartData的keyIds列表中）
@@ -183,6 +188,27 @@ public class Key_move : MonoBehaviour
     private void SyncPosition()
     {
         transform.position = new Vector3(_currentX, _currentY, transform.position.z);
+    }
+
+    /// <summary>
+    /// 更新按键精灵状态（根据按键是否按下）
+    /// </summary>
+    private void UpdateKeySprite()
+    {
+        if (_spriteRenderer == null) return;
+        
+        // 检查按键是否被按下或按住
+        bool isPressed = InputManager.Instance != null && 
+                        (InputManager.Instance.IsGroupPressed(keyIndex) || 
+                         InputManager.Instance.IsGroupHeld(keyIndex));
+        
+        // 根据状态切换精灵
+        Sprite targetSprite = isPressed ? pressedKeySprite : defaultKeySprite;
+        
+        if (targetSprite != null && _spriteRenderer.sprite != targetSprite)
+        {
+            _spriteRenderer.sprite = targetSprite;
+        }
     }
 
     /// <summary>

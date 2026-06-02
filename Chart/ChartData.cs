@@ -63,14 +63,31 @@ public class KeyData
         this.keyCommands = new List<KeyCommand>(); // 初始化指令列表
     }
 
-    // 无参构造（Unity序列化需要）
+    // 无参构造
     public KeyData()
     {
         keyCommands = new List<KeyCommand>();
     }
 }
 
-// 改为MonoBehaviour，移除CreateAssetMenu（MonoBehaviour不能作为资源创建）
+// 小节数据（包含该小节的 BPM 和拍号）
+[Serializable]
+public class MeasureData
+{
+    public int measureIndex;      // 小节序号（从0开始）
+    public float bpm;             // 该小节的 BPM
+    public int beatsPerMeasure;   // 每小节拍数（拍号分子，如 4/4 中的 4）
+    public int beatUnit;          // 拍号分母（如 4/4 中的 4，表示四分音符为一拍）
+    
+    public MeasureData(int index, float bpm, int beatsPerMeasure = 4, int beatUnit = 4)
+    {
+        this.measureIndex = index;
+        this.bpm = bpm;
+        this.beatsPerMeasure = beatsPerMeasure;
+        this.beatUnit = beatUnit;
+    }
+}
+
 public class ChartData : MonoBehaviour
 {
     private static ChartData _instance;
@@ -107,6 +124,13 @@ public class ChartData : MonoBehaviour
     public float totalDuration;                           // 谱面总时长
     public int noteCount => commands?.Count ?? 0;        // 改为属性
     public int keyCount => keyDatas?.Count ?? 0;         // 改为属性
+    
+    [Header("节奏与节拍数据")]
+    public List<MeasureData> measures = new List<MeasureData>();  // 小节数据列表
+    public int measureCount => measures?.Count ?? 0;              // 小节数量
+    public float defaultBpm = 120f;                               // 默认 BPM（当没有小节数据时使用）
+    public int defaultBeatsPerMeasure = 4;                        // 默认每小节拍数
+    public int defaultBeatUnit = 4;                               // 默认拍号分母
     [Header("运行时数据（无需手动编辑）")]
     public Dictionary<int, bool> isScorable = new Dictionary<int, bool>(); 
     public List<int> keyIds = new List<int>(); // 存储轨道按键 ID 列表（对应 chart.txt 第二行的内容）
@@ -141,15 +165,15 @@ public class ChartData : MonoBehaviour
 
         keyDatas.Clear();
         commands.Clear();
+        measures.Clear();
         totalDuration = 0;
         isScorable.Clear();
         keyIds.Clear();
     }
 
-    // 原有方法保留，仅修改 ResetChartData：清空 KeyData 的指令列表
+    // 清空 KeyData 的指令列表
     public void ResetChartData()
     {
-        // 复用 ClearChartContent 逻辑，避免代码冗余
         ClearChartContent();
     }
     
@@ -219,5 +243,161 @@ public class ChartData : MonoBehaviour
             // timeA相同则比较num（唯一编号，保证排序稳定）
             return cmd1.num.CompareTo(cmd2.num);
         });
+    }
+    
+    /// <summary>
+    /// 根据时间获取对应的小节数据
+    /// </summary>
+    public MeasureData GetMeasureAtTime(float time)
+    {
+        if (measures == null || measures.Count == 0)
+        {
+            // 如果没有小节数据，返回默认值
+            return new MeasureData(0, defaultBpm, defaultBeatsPerMeasure, defaultBeatUnit);
+        }
+        
+        // 计算每个小节的起始时间
+        float currentTime = 0f;
+        for (int i = 0; i < measures.Count; i++)
+        {
+            var measure = measures[i];
+            float measureDuration = CalculateMeasureDuration(measure);
+            
+            if (time >= currentTime && time < currentTime + measureDuration)
+            {
+                return measure;
+            }
+            
+            currentTime += measureDuration;
+        }
+        
+        // 如果时间超出所有小节，返回最后一个小节
+        return measures[measures.Count - 1];
+    }
+    
+    /// <summary>
+    /// 根据时间获取对应的小节索引
+    /// </summary>
+    public int GetMeasureIndexAtTime(float time)
+    {
+        if (measures == null || measures.Count == 0)
+        {
+            return 0;
+        }
+        
+        // 计算每个小节的起始时间
+        float currentTime = 0f;
+        for (int i = 0; i < measures.Count; i++)
+        {
+            var measure = measures[i];
+            float measureDuration = CalculateMeasureDuration(measure);
+            
+            if (time >= currentTime && time < currentTime + measureDuration)
+            {
+                return i;
+            }
+            
+            currentTime += measureDuration;
+        }
+        
+        // 如果时间超出所有小节，返回最后一个小节的索引
+        return measures.Count - 1;
+    }
+    
+    /// <summary>
+    /// 计算单个小节的持续时间（秒）
+    /// </summary>
+    public float CalculateMeasureDuration(MeasureData measure)
+    {
+        // 小节时长 = (每小节拍数 / 拍号分母) * (60 / BPM)
+        float beatsDuration = (float)measure.beatsPerMeasure / measure.beatUnit;
+        return beatsDuration * (60f / measure.bpm);
+    }
+    
+    /// <summary>
+    /// 将时间转换为节拍位置（用于吸附）
+    /// </summary>
+    public float TimeToBeatPosition(float time)
+    {
+        if (measures == null || measures.Count == 0)
+        {
+            // 简单情况：使用默认 BPM
+            return time * (defaultBpm / 60f);
+        }
+        
+        float currentTime = 0f;
+        float totalBeats = 0f;
+        
+        for (int i = 0; i < measures.Count; i++)
+        {
+            var measure = measures[i];
+            float measureDuration = CalculateMeasureDuration(measure);
+            
+            if (time >= currentTime && time < currentTime + measureDuration)
+            {
+                // 在当前小节内
+                float timeInMeasure = time - currentTime;
+                float beatsInMeasure = timeInMeasure * (measure.bpm / 60f);
+                return totalBeats + beatsInMeasure;
+            }
+            
+            // 累加完整小节的拍数
+            totalBeats += measure.beatsPerMeasure;
+            currentTime += measureDuration;
+        }
+        
+        // 超出所有小节
+        float remainingTime = time - currentTime;
+        var lastMeasure = measures[measures.Count - 1];
+        return totalBeats + remainingTime * (lastMeasure.bpm / 60f);
+    }
+    
+    /// <summary>
+    /// 将节拍位置转换为时间（用于吸附后转换回时间）
+    /// </summary>
+    public float BeatPositionToTime(float beatPosition)
+    {
+        if (measures == null || measures.Count == 0)
+        {
+            // 简单情况：使用默认 BPM
+            return beatPosition * (60f / defaultBpm);
+        }
+        
+        float currentTime = 0f;
+        float totalBeats = 0f;
+        
+        for (int i = 0; i < measures.Count; i++)
+        {
+            var measure = measures[i];
+            float beatsInThisMeasure = measure.beatsPerMeasure;
+            
+            if (beatPosition >= totalBeats && beatPosition < totalBeats + beatsInThisMeasure)
+            {
+                // 在当前小节内
+                float beatsInMeasure = beatPosition - totalBeats;
+                float timeInMeasure = beatsInMeasure * (60f / measure.bpm);
+                return currentTime + timeInMeasure;
+            }
+            
+            // 累加完整小节的时间
+            currentTime += CalculateMeasureDuration(measure);
+            totalBeats += beatsInThisMeasure;
+        }
+        
+        // 超出所有小节
+        float remainingBeats = beatPosition - totalBeats;
+        var lastMeasure = measures[measures.Count - 1];
+        return currentTime + remainingBeats * (60f / lastMeasure.bpm);
+    }
+    
+    /// <summary>
+    /// 吸附时间到最近的节拍或半拍
+    /// </summary>
+    public float SnapToBeat(float time, bool snapToHalfBeat = true)
+    {
+        float beatPos = TimeToBeatPosition(time);
+        float snapInterval = snapToHalfBeat ? 0.5f : 1f;
+        float snappedBeat = Mathf.Round(beatPos / snapInterval) * snapInterval;
+        return BeatPositionToTime(snappedBeat);
     }
 }

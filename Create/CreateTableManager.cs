@@ -20,8 +20,17 @@ public class CreateTableManager : MonoBehaviour
     public string startSceneName = "StartScene";
     public string createSceneName = "CreateScene";
 
+    [Header("Rename Dialog")]
+    public GameObject renameDialogPanel; // 重命名对话框面板
+    public TMP_InputField renameInputField; // 重命名输入框
+    public Button renameConfirmBtn;      // 确认重命名按钮
+    public Button renameCancelBtn;       // 取消重命名按钮
+
     // 新增：临时解析谱面的辅助对象（需在场景中挂载LoadChart脚本，或动态创建）
     public LoadChart loadChartHelper;
+
+    // 重命名相关状态
+    private string renamingFileName = ""; // 当前正在重命名的文件名
 
     private void Start()
     {
@@ -31,6 +40,9 @@ public class CreateTableManager : MonoBehaviour
             
         if (backButton != null)
             backButton.onClick.AddListener(OnBackToStart);
+
+        // 初始化重命名对话框
+        InitializeRenameDialog();
 
         // 加载并显示谱面列表（含时长、按键数）
         RefreshChartList();
@@ -94,47 +106,20 @@ public class CreateTableManager : MonoBehaviour
         {
             string chartContent = string.Empty;
 
-            // 分平台读取文件（兼容移动端）
-            if (Application.platform == RuntimePlatform.Android || Application.platform == RuntimePlatform.IPhonePlayer)
+            try
             {
-                // 移动端需用UnityWebRequest读取StreamingAssets
-                string url = $"file://{filePath}";
-                using (UnityEngine.Networking.UnityWebRequest www = UnityEngine.Networking.UnityWebRequest.Get(url))
+                // PC端直接读取文件
+                if (!File.Exists(filePath))
                 {
-                    // 发送请求
-                    var operation = www.SendWebRequest();
-                    // 同步等待（仅在编辑器/初始化时使用，非主线程阻塞场景可忽略）
-                    while (!operation.isDone) { }
-
-#if UNITY_2020_1_OR_NEWER
-                    if (www.result != UnityEngine.Networking.UnityWebRequest.Result.Success)
-#else
-                    if (!string.IsNullOrEmpty(www.error))
-#endif
-                    {
-                        Debug.LogError($"读取移动端谱面失败：{www.error} | 路径：{filePath}");
-                        return false;
-                    }
-                    chartContent = www.downloadHandler.text;
-                }
-            }
-            else
-            {
-                try
-                {
-                    // 电脑端直接读取
-                    if (!File.Exists(filePath))
-                    {
-                        Debug.LogError($"谱面文件不存在：{filePath}");
-                        return false;
-                    }
-                    chartContent = File.ReadAllText(filePath);
-                }
-                catch (IOException ex)
-                {
-                    Debug.LogError($"读取谱面文件时发生IO异常：{ex.Message} | 路径：{filePath}");
+                    Debug.LogError($"谱面文件不存在：{filePath}");
                     return false;
                 }
+                chartContent = File.ReadAllText(filePath);
+            }
+            catch (IOException ex)
+            {
+                Debug.LogError($"读取谱面文件时发生IO异常：{ex.Message} | 路径：{filePath}");
+                return false;
             }
 
             // 解析谱面头部（轨道按键、时长）—— 复用LoadChart的核心逻辑
@@ -230,6 +215,49 @@ public class CreateTableManager : MonoBehaviour
             string fullPath = Path.Combine(Application.streamingAssetsPath, "Create", fileName);
             editBtn.onClick.AddListener(() => OnEditChart(fileName));
         }
+
+        // 5. 添加右键菜单功能
+        AddRightClickMenu(item, fileName);
+    }
+
+    /// <summary>
+    /// 为谱面条目添加右键菜单
+    /// </summary>
+    private void AddRightClickMenu(GameObject item, string fileName)
+    {
+        // 添加 EventTrigger 组件来监听右键点击
+        var eventTrigger = item.GetComponent<UnityEngine.EventSystems.EventTrigger>();
+        if (eventTrigger == null)
+        {
+            eventTrigger = item.AddComponent<UnityEngine.EventSystems.EventTrigger>();
+        }
+
+        // 创建右键点击触发器
+        var rightClickTrigger = new UnityEngine.EventSystems.EventTrigger.TriggerEvent();
+        rightClickTrigger.AddListener((eventData) => OnChartItemRightClick(fileName, eventData));
+
+        // 绑定右键点击事件
+        var entry = new UnityEngine.EventSystems.EventTrigger.Entry();
+        entry.eventID = UnityEngine.EventSystems.EventTriggerType.PointerClick;
+        entry.callback = rightClickTrigger;
+        eventTrigger.triggers.Add(entry);
+
+        Debug.Log($"[CreateTableManager] 已为谱面 {fileName} 添加右键菜单");
+    }
+
+    /// <summary>
+    /// 处理谱面条目右键点击
+    /// </summary>
+    private void OnChartItemRightClick(string fileName, UnityEngine.EventSystems.BaseEventData eventData)
+    {
+        var pointerData = eventData as UnityEngine.EventSystems.PointerEventData;
+        
+        // 检查是否是右键点击（鼠标右键 = 1）
+        if (pointerData != null && pointerData.button == UnityEngine.EventSystems.PointerEventData.InputButton.Right)
+        {
+            Debug.Log($"[CreateTableManager] 右键点击谱面: {fileName}");
+            ShowRenameDialog(fileName);
+        }
     }
 
     /// <summary>
@@ -240,7 +268,8 @@ public class CreateTableManager : MonoBehaviour
         // 记录要编辑的文件的完整相对路径（Create目录下）
         string relativePath = Path.Combine("Create", fileName);
         PlayerPrefs.SetString("EditingChartFileName", relativePath);
-        SceneManager.LoadScene(createSceneName);
+        // 先进入ChartSettingScene进行设置
+        SceneManager.LoadScene("ChartSettingScene");
     }
 
     /// <summary>
@@ -251,7 +280,8 @@ public class CreateTableManager : MonoBehaviour
         // 清除编辑标记，表示新建
         PlayerPrefs.DeleteKey("EditingChartFileName");
         PlayerPrefs.DeleteKey("EditingChartPath");
-        SceneManager.LoadScene(createSceneName);
+        // 先进入ChartSettingScene进行设置
+        SceneManager.LoadScene("ChartSettingScene");
     }
 
     /// <summary>
@@ -261,4 +291,185 @@ public class CreateTableManager : MonoBehaviour
     {
         SceneManager.LoadScene(startSceneName);
     }
+
+    #region 重命名功能
+
+    /// <summary>
+    /// 初始化重命名对话框
+    /// </summary>
+    private void InitializeRenameDialog()
+    {
+        if (renameDialogPanel != null)
+        {
+            renameDialogPanel.SetActive(false); // 初始隐藏
+        }
+
+        if (renameConfirmBtn != null)
+        {
+            renameConfirmBtn.onClick.AddListener(OnRenameConfirm);
+        }
+
+        if (renameCancelBtn != null)
+        {
+            renameCancelBtn.onClick.AddListener(OnRenameCancel);
+        }
+    }
+
+    /// <summary>
+    /// 显示重命名对话框
+    /// </summary>
+    private void ShowRenameDialog(string fileName)
+    {
+        renamingFileName = fileName;
+
+        if (renameDialogPanel != null)
+        {
+            renameDialogPanel.SetActive(true);
+        }
+
+        if (renameInputField != null)
+        {
+            // 去掉 .txt 扩展名，只显示文件名
+            string nameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
+            renameInputField.text = nameWithoutExt;
+            renameInputField.ActivateInputField(); // 自动聚焦
+            renameInputField.Select();
+        }
+
+        Debug.Log($"[CreateTableManager] 打开重命名对话框: {fileName}");
+    }
+
+    /// <summary>
+    /// 确认重命名
+    /// </summary>
+    private void OnRenameConfirm()
+    {
+        if (string.IsNullOrEmpty(renamingFileName))
+        {
+            Debug.LogWarning("[CreateTableManager] 重命名失败：未选择文件");
+            OnRenameCancel();
+            return;
+        }
+
+        if (renameInputField == null)
+        {
+            Debug.LogError("[CreateTableManager] 重命名失败：输入框为空");
+            OnRenameCancel();
+            return;
+        }
+
+        string newName = renameInputField.text.Trim();
+
+        // 验证新名称
+        if (string.IsNullOrEmpty(newName))
+        {
+            Debug.LogWarning("[CreateTableManager] 重命名失败：新名称不能为空");
+            return;
+        }
+
+        // 检查是否包含非法字符
+        if (IsFileNameInvalid(newName))
+        {
+            Debug.LogWarning($"[CreateTableManager] 重命名失败：名称 '{newName}' 包含非法字符");
+            return;
+        }
+
+        // 添加 .txt 扩展名
+        if (!newName.EndsWith(".txt", System.StringComparison.OrdinalIgnoreCase))
+        {
+            newName += ".txt";
+        }
+
+        // 执行重命名
+        bool success = RenameChartFile(renamingFileName, newName);
+
+        if (success)
+        {
+            Debug.Log($"[CreateTableManager] 重命名成功: {renamingFileName} → {newName}");
+            RefreshChartList(); // 刷新列表
+        }
+        else
+        {
+            Debug.LogError($"[CreateTableManager] 重命名失败: {renamingFileName} → {newName}");
+        }
+
+        OnRenameCancel(); // 关闭对话框
+    }
+
+    /// <summary>
+    /// 取消重命名
+    /// </summary>
+    private void OnRenameCancel()
+    {
+        renamingFileName = "";
+
+        if (renameDialogPanel != null)
+        {
+            renameDialogPanel.SetActive(false);
+        }
+
+        if (renameInputField != null)
+        {
+            renameInputField.text = "";
+        }
+    }
+
+    /// <summary>
+    /// 重命名谱面文件
+    /// </summary>
+    private bool RenameChartFile(string oldFileName, string newFileName)
+    {
+        try
+        {
+            string createPath = Path.Combine(Application.streamingAssetsPath, "Create");
+            string oldFilePath = Path.Combine(createPath, oldFileName);
+            string newFilePath = Path.Combine(createPath, newFileName);
+
+            // 检查原文件是否存在
+            if (!File.Exists(oldFilePath))
+            {
+                Debug.LogError($"[CreateTableManager] 原文件不存在: {oldFilePath}");
+                return false;
+            }
+
+            // 检查新文件名是否已存在
+            if (File.Exists(newFilePath) && oldFileName != newFileName)
+            {
+                Debug.LogError($"[CreateTableManager] 目标文件已存在: {newFilePath}");
+                return false;
+            }
+
+            // 执行重命名
+            File.Move(oldFilePath, newFilePath);
+            Debug.Log($"[CreateTableManager] 文件重命名成功: {oldFileName} → {newFileName}");
+
+            return true;
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"[CreateTableManager] 重命名文件时发生异常: {ex.Message}\n{ex.StackTrace}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 检查文件名是否包含非法字符
+    /// </summary>
+    private bool IsFileNameInvalid(string fileName)
+    {
+        // Windows 非法字符: < > : " / \ | ? *
+        char[] invalidChars = Path.GetInvalidFileNameChars();
+        
+        foreach (char c in fileName)
+        {
+            if (invalidChars.Contains(c))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    #endregion
 }

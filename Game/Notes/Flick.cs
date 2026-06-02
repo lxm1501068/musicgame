@@ -4,11 +4,6 @@ using System.Collections.Generic;
 
 public class Flick : BaseNote
 {
-    [Header("判定对应的精灵图片")]
-    public Sprite defaultFlickSprite;
-    public Sprite perfectFlickSprite;
-    public Sprite missFlickSprite;
-
     [Header("Flick 专属配置")]
     public float perfectThreshold = 0.15f;             // Perfect 判定窗口
     public float secondKeyWindow = 0.3f;               // 第二个按键的响应窗口
@@ -26,9 +21,8 @@ public class Flick : BaseNote
     protected override void Awake()
     {
         base.Awake();
-        if (defaultFlickSprite != null)
-            spriteRenderer.sprite = defaultFlickSprite;
     }
+
 
     protected override void InitCommands()
     {
@@ -110,16 +104,4 @@ public class Flick : BaseNote
         }
     }
 
-    protected override void SwitchJudgeSprite(JudgeResult result)
-    {
-        Sprite targetSprite = result switch
-        {
-            JudgeResult.Perfect => perfectFlickSprite,
-            JudgeResult.Miss => missFlickSprite,
-            _ => defaultFlickSprite
-        };
-
-        if (targetSprite != null)
-            spriteRenderer.sprite = targetSprite;
-    }
 }

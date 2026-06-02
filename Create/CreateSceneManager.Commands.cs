@@ -42,6 +42,7 @@ public partial class CreateSceneManager
         if (startTimeInputField != null) startTimeInputField.gameObject.SetActive(false);
         if (endTimeInputField != null) endTimeInputField.gameObject.SetActive(false);
         if (extraParamInputField != null) extraParamInputField.gameObject.SetActive(false);
+        if (moveTypeDropdown != null) moveTypeDropdown.gameObject.SetActive(false);
     }
 
     private void OnStartPosInputEndEdit(string value)
@@ -92,16 +93,26 @@ public partial class CreateSceneManager
 
     private void UpdateCmdManagementUI()
     {
-        if (selectedType == SelectedType.None || 
-           (selectedType == SelectedType.Note && selectedCommand == null) || 
-           (selectedType == SelectedType.Key && selectedKeyData == null))
+        // 检查是否有有效的选中对象
+        bool hasValidSelection = false;
+        if (selectedType == SelectedType.Note && selectedCommand != null)
         {
-            cmdModeToggleBtn.gameObject.SetActive(false);
-            cmdDropdown.gameObject.SetActive(false);
+            hasValidSelection = true;
+        }
+        else if (selectedType == SelectedType.Key && selectedKeyData != null)
+        {
+            hasValidSelection = true;
+        }
+
+        if (!hasValidSelection)
+        {
+            // 没有有效选中对象，隐藏所有指令管理 UI
+            if (cmdModeToggleBtn != null) cmdModeToggleBtn.gameObject.SetActive(false);
+            if (cmdDropdown != null) cmdDropdown.gameObject.SetActive(false);
             if (existingCmdsDropdown != null) existingCmdsDropdown.gameObject.SetActive(false);
-            cmdConfirmBtn.gameObject.SetActive(false);
+            if (cmdConfirmBtn != null) cmdConfirmBtn.gameObject.SetActive(false);
             HideCommandDetailFields();
-            if (moveOptionPanel != null) moveOptionPanel.SetActive(false);
+            if (moveTypeDropdown != null) moveTypeDropdown.gameObject.SetActive(false);
             return;
         }
 
@@ -135,9 +146,21 @@ public partial class CreateSceneManager
     private void UpdateAddFlowUI()
     {
         HideCommandDetailFields();
-        if (moveOptionPanel != null) moveOptionPanel.SetActive(false);
-        cmdDropdown.gameObject.SetActive(false);
-        if (existingCmdsDropdown != null) existingCmdsDropdown.gameObject.SetActive(true); // 始终显示现有指令供查看
+        if (moveTypeDropdown != null) moveTypeDropdown.gameObject.SetActive(false);
+        
+        // 确保 cmdDropdown 存在
+        if (cmdDropdown == null)
+        {
+            Debug.LogWarning("cmdDropdown 未赋值！请在 Inspector 中设置。");
+            return;
+        }
+        
+        cmdDropdown.gameObject.SetActive(false); // 默认隐藏，根据步骤决定是否显示
+        if (existingCmdsDropdown != null)
+        {
+            existingCmdsDropdown.gameObject.SetActive(true); // 始终显示现有指令供查看
+            PopulateExistingCmds(); // 填充现有指令列表
+        }
         cmdConfirmBtn.gameObject.SetActive(true);
 
         TextMeshProUGUI confirmBtnText = cmdConfirmBtn.GetComponentInChildren<TextMeshProUGUI>();
@@ -145,12 +168,28 @@ public partial class CreateSceneManager
         switch (currentAddStep)
         {
             case AddStep.SelectType:
-                cmdDropdown.gameObject.SetActive(true);
-                cmdDropdown.ClearOptions();
+                cmdDropdown.gameObject.SetActive(true); // 显示指令类型选择
+                
+                // 清除旧选项并添加新选项
+                cmdDropdown.options.Clear();
+                
+                List<string> options = new List<string>();
                 if (selectedType == SelectedType.Note)
-                    cmdDropdown.AddOptions(new List<string> { "shift", "move", "destroy", "drop_to", "spin" });
+                    options = new List<string> { "shift", "move", "destroy", "drop_to", "spin" };
                 else
-                    cmdDropdown.AddOptions(new List<string> { "shift", "move", "hide", "show" });
+                    options = new List<string> { "shift", "move", "hide", "show" };
+                
+                // 添加选项
+                foreach (string option in options)
+                {
+                    cmdDropdown.options.Add(new TMP_Dropdown.OptionData(option));
+                }
+                
+                // 重置选中值为第一个选项
+                cmdDropdown.value = 0;
+                
+                // 刷新下拉框显示
+                cmdDropdown.RefreshShownValue();
                 
                 if (confirmBtnText != null) confirmBtnText.text = "确认类型";
                 infoText.text = "步骤 1: 选择指令类型";
@@ -160,9 +199,15 @@ public partial class CreateSceneManager
                 startTimeInputField.gameObject.SetActive(true);
                 // 只有 destroy, shift, move, drop_to, hide, show 有 endTime，部分只有一个时间
                 string currentCmd = cmdDropdown.options[cmdDropdown.value].text;
-                if (currentCmd != "destroy" && currentCmd != "hide" && currentCmd != "show")
+                if (currentCmd == "destroy" || currentCmd == "hide" || currentCmd == "show")
                 {
-                    endTimeInputField.gameObject.SetActive(true);
+                    // 这些指令只需要一个时间点
+                    if (endTimeInputField != null) endTimeInputField.gameObject.SetActive(false);
+                }
+                else
+                {
+                    // shift, move, drop_to, spin 需要起始和结束时间
+                    if (endTimeInputField != null) endTimeInputField.gameObject.SetActive(true);
                 }
                 
                 if (confirmBtnText != null) confirmBtnText.text = "确认时间";
@@ -189,11 +234,15 @@ public partial class CreateSceneManager
                 break;
 
             case AddStep.InputMoveParams:
-                if (moveOptionPanel != null) moveOptionPanel.SetActive(true);
+                if (moveTypeDropdown != null)
+                {
+                    moveTypeDropdown.gameObject.SetActive(true);
+                    moveTypeDropdown.value = 0; // 重置为默认选项
+                }
                 extraParamInputField.gameObject.SetActive(true);
                 extraParamInputField.placeholder.GetComponent<TextMeshProUGUI>().text = "或输入 .json 文件名";
 
-                if (confirmBtnText != null) confirmBtnText.text = "确认添加 (或点击选项)";
+                if (confirmBtnText != null) confirmBtnText.text = "确认添加 (或选择运动类型)";
                 infoText.text = "步骤 3: 选择运动方式";
                 break;
 
@@ -210,7 +259,7 @@ public partial class CreateSceneManager
     private void UpdateDeleteFlowUI()
     {
         HideCommandDetailFields();
-        if (moveOptionPanel != null) moveOptionPanel.SetActive(false);
+        if (moveTypeDropdown != null) moveTypeDropdown.gameObject.SetActive(false);
         cmdDropdown.gameObject.SetActive(false);
         if (existingCmdsDropdown != null) existingCmdsDropdown.gameObject.SetActive(true);
         cmdConfirmBtn.gameObject.SetActive(true);
@@ -227,38 +276,74 @@ public partial class CreateSceneManager
     private void PopulateExistingCmds()
     {
         if (existingCmdsDropdown == null) return;
-        existingCmdsDropdown.ClearOptions();
+        
+        // 清除旧选项
+        existingCmdsDropdown.options.Clear();
         
         if (selectedType == SelectedType.Note)
         {
             var noteCmds = ChartData.Instance.commands.Where(c => c.num == selectedCommand.num).ToList();
-            List<string> options = noteCmds.Select(c => {
-                string prefix = c.isNoteFirstTimeOccured ? "# " : "% ";
-                return $"{prefix}{c.type.ToString().ToLower()} {c.num} {c.commandName} {c.timeA:F3} {c.timeB:F3}";
-            }).ToList();
-            existingCmdsDropdown.AddOptions(options);
-            int currentIndex = noteCmds.IndexOf(selectedCommand);
-            if (currentIndex >= 0)
+            
+            if (noteCmds.Count == 0)
             {
-                existingCmdsDropdown.onValueChanged.RemoveListener(OnExistingCmdSelected);
-                existingCmdsDropdown.value = currentIndex;
-                existingCmdsDropdown.onValueChanged.AddListener(OnExistingCmdSelected);
+                // 没有任何指令时显示 (empty)
+                existingCmdsDropdown.options.Add(new TMP_Dropdown.OptionData("(empty)"));
+                existingCmdsDropdown.value = 0;
+            }
+            else
+            {
+                List<string> options = noteCmds.Select(c => {
+                    string prefix = c.isNoteFirstTimeOccured ? "# " : "% ";
+                    return $"{prefix}{c.type.ToString().ToLower()} {c.num} {c.commandName} {c.timeA:F3} {c.timeB:F3}";
+                }).ToList();
+                
+                // 添加选项
+                foreach (string option in options)
+                {
+                    existingCmdsDropdown.options.Add(new TMP_Dropdown.OptionData(option));
+                }
+                
+                int currentIndex = noteCmds.IndexOf(selectedCommand);
+                if (currentIndex >= 0)
+                {
+                    existingCmdsDropdown.onValueChanged.RemoveListener(OnExistingCmdSelected);
+                    existingCmdsDropdown.value = currentIndex;
+                    existingCmdsDropdown.onValueChanged.AddListener(OnExistingCmdSelected);
+                }
             }
         }
         else if (selectedType == SelectedType.Key)
         {
-            List<string> options = selectedKeyData.keyCommands.Select(c => 
-                $"$ key {c.keyIndex} {c.cmdType} {c.startTime:F3} {c.endTime:F3}"
-            ).ToList();
-            existingCmdsDropdown.AddOptions(options);
-            int currentIndex = selectedKeyData.keyCommands.IndexOf(selectedKeyCommand);
-            if (currentIndex >= 0)
+            if (selectedKeyData.keyCommands.Count == 0)
             {
-                existingCmdsDropdown.onValueChanged.RemoveListener(OnExistingCmdSelected);
-                existingCmdsDropdown.value = currentIndex;
-                existingCmdsDropdown.onValueChanged.AddListener(OnExistingCmdSelected);
+                // 没有任何指令时显示 (empty)
+                existingCmdsDropdown.options.Add(new TMP_Dropdown.OptionData("(empty)"));
+                existingCmdsDropdown.value = 0;
+            }
+            else
+            {
+                List<string> options = selectedKeyData.keyCommands.Select(c => 
+                    $"$ key {c.keyIndex} {c.cmdType} {c.startTime:F3} {c.endTime:F3}"
+                ).ToList();
+                
+                // 添加选项
+                foreach (string option in options)
+                {
+                    existingCmdsDropdown.options.Add(new TMP_Dropdown.OptionData(option));
+                }
+                
+                int currentIndex = selectedKeyData.keyCommands.IndexOf(selectedKeyCommand);
+                if (currentIndex >= 0)
+                {
+                    existingCmdsDropdown.onValueChanged.RemoveListener(OnExistingCmdSelected);
+                    existingCmdsDropdown.value = currentIndex;
+                    existingCmdsDropdown.onValueChanged.AddListener(OnExistingCmdSelected);
+                }
             }
         }
+        
+        // 刷新下拉框显示
+        existingCmdsDropdown.RefreshShownValue();
     }
 
     private void OnConfirmCmdAction()
@@ -338,7 +423,17 @@ public partial class CreateSceneManager
 
             case AddStep.InputPos:
             case AddStep.InputMoveParams:
+            case AddStep.InputSpinParams:
                 ExecuteAdd();
+                
+                // 清空输入框，为下一次添加做准备
+                if (startTimeInputField != null) startTimeInputField.text = "";
+                if (endTimeInputField != null) endTimeInputField.text = "";
+                if (extraParamInputField != null) extraParamInputField.text = "";
+                capturedStartPos = Vector2.zero;
+                capturedEndPos = Vector2.zero;
+                UpdatePosBtnTexts();
+                
                 currentAddStep = AddStep.SelectType; // 完成后重置
                 break;
         }
@@ -430,19 +525,39 @@ public partial class CreateSceneManager
             var noteCmds = ChartData.Instance.commands.Where(c => c.num == selectedCommand.num).ToList();
             if (noteCmds.Count <= 1)
             {
-                infoText.text = "无法删除唯一指令，请使用 Delete 键删除音符";
+                infoText.text = "无法删除唯一指令，请使用 Delete 键删除整个音符对象";
                 return;
             }
+            
+            // 记录要删除的指令信息
+            string cmdInfo = $"{selectedCommand.commandName} @ {selectedCommand.timeA:F2}s";
+            
             ChartData.Instance.commands.Remove(selectedCommand);
+            
+            // 选中该音符的第一个指令
             selectedCommand = ChartData.Instance.commands.FirstOrDefault(c => c.num == selectedCommand.num);
+            
+            infoText.text = $"已删除指令: {cmdInfo}";
         }
-        else
+        else if (selectedType == SelectedType.Key)
         {
-            if (selectedKeyCommand == null) return;
+            if (selectedKeyCommand == null)
+            {
+                infoText.text = "没有选中的按键指令";
+                return;
+            }
+            
+            // 记录要删除的指令信息
+            string cmdInfo = $"{selectedKeyCommand.cmdType} @ {selectedKeyCommand.startTime:F2}s";
+            
             selectedKeyData.keyCommands.Remove(selectedKeyCommand);
+            
+            // 选中该按键的第一个指令
             selectedKeyCommand = selectedKeyData.keyCommands.FirstOrDefault();
+            
+            infoText.text = $"已删除按键指令: {cmdInfo}";
         }
-        infoText.text = "已删除指令";
+        
         UpdateCmdManagementUI();
     }
 
@@ -468,6 +583,13 @@ public partial class CreateSceneManager
 
     private void OnExistingCmdSelected(int index)
     {
+        // 如果选择的是 "(empty)"，不执行任何操作
+        if (existingCmdsDropdown != null && existingCmdsDropdown.options.Count == 1 && 
+            existingCmdsDropdown.options[0].text == "(empty)")
+        {
+            return;
+        }
+
         if (selectedType == SelectedType.Note && selectedCommand != null)
         {
             var noteCmds = ChartData.Instance.commands.Where(c => c.num == selectedCommand.num).ToList();
@@ -475,6 +597,7 @@ public partial class CreateSceneManager
             {
                 selectedCommand = noteCmds[index];
                 UpdateInfoPanelForNote();
+                infoText.text = $"已切换到指令: {selectedCommand.commandName} @ {selectedCommand.timeA:F2}s";
             }
         }
         else if (selectedType == SelectedType.Key && selectedKeyData != null)
@@ -483,6 +606,7 @@ public partial class CreateSceneManager
             {
                 selectedKeyCommand = selectedKeyData.keyCommands[index];
                 UpdateInfoPanelForKey();
+                infoText.text = $"已切换到按键指令: {selectedKeyCommand.cmdType} @ {selectedKeyCommand.startTime:F2}s";
             }
         }
     }

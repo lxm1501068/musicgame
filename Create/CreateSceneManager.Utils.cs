@@ -30,23 +30,48 @@ public partial class CreateSceneManager
 
         if (selectedType == SelectedType.Note && selectedCommand != null)
         {
-            ChartData.Instance.commands.Remove(selectedCommand);
-            infoText.text = $"已删除音符，编号 {selectedCommand.num}";
+            // 如果该音符有关联的按键，记录一下
+            int associatedKeyId = selectedCommand.key_name;
+            
+            // 从 ChartData 中移除该音符的所有指令
+            var cmdsToRemove = ChartData.Instance.commands.Where(c => c.num == selectedCommand.num).ToList();
+            foreach (var cmd in cmdsToRemove)
+            {
+                ChartData.Instance.commands.Remove(cmd);
+            }
+            
+            infoText.text = $"已删除音符 #{selectedCommand.num}";
+            
+            // 如果没有其他音符使用该按键，可以考虑提示用户
+            if (associatedKeyId > 0 && !ChartData.Instance.commands.Any(c => c.key_name == associatedKeyId))
+            {
+                // Debug.Log($"注意：Key ID {associatedKeyId} 现在没有被任何音符使用");
+            }
         }
         else if (selectedType == SelectedType.Key && selectedKeyData != null)
         {
-            // 新增：删除按键时，将所有关联该按键的音符 key_name 重置为 0
+            // 删除按键时，将所有关联该按键的音符 key_name 重置为 0
             int oldKeyId = selectedKeyData.keyName;
+            int updatedCount = 0;
             foreach (var cmd in ChartData.Instance.commands)
             {
                 if (cmd.key_name == oldKeyId)
                 {
                     cmd.key_name = 0;
+                    updatedCount++;
                 }
             }
 
             ChartData.Instance.keyDatas.Remove(selectedKeyData);
-            infoText.text = $"已删除按键，ID {selectedKeyData.keyName}";
+            
+            if (updatedCount > 0)
+            {
+                infoText.text = $"已删除按键 ID {oldKeyId}，并重置了 {updatedCount} 个关联音符";
+            }
+            else
+            {
+                infoText.text = $"已删除按键 ID {oldKeyId}";
+            }
         }
 
         Destroy(selectedObject);

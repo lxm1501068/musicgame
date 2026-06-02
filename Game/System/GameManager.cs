@@ -18,6 +18,7 @@ public class GameManager : MonoBehaviour
     public Button quitButton;      // 退出按钮
     public Button restartButton;   // 重新开始按钮
     public string levelSceneName = "LevelScene"; // 关卡场景名
+    public string resultSceneName = "ResultScene"; // 结算场景名
 
     // +++ BGM 新增：背景音乐播放器
     [Header("BGM 设置")]
@@ -75,6 +76,21 @@ public class GameManager : MonoBehaviour
 
         // 初始化暂停菜单按钮
         InitPauseMenu();
+        
+        // 加载保存的皮肤偏好
+        LoadSkinPreference();
+    }
+
+    /// <summary>
+    /// 加载保存的皮肤偏好
+    /// </summary>
+    private void LoadSkinPreference()
+    {
+        if (SkinManager.Instance != null)
+        {
+            SkinManager.Instance.LoadSavedSkinPreference();
+            Debug.Log("[GameManager] 已加载皮肤偏好");
+        }
     }
 
     private void InitPauseMenu()
@@ -424,5 +440,49 @@ public class GameManager : MonoBehaviour
             TogglePlay(); // 执行暂停/恢复逻辑
             Debug.Log("GameManager: 检测到Esc键按下，执行TogglePlay()");
         }
+        
+        // 检测谱面是否结束
+        CheckChartEnd();
+    }
+    
+    /// <summary>
+    /// 检测谱面是否结束，如果结束则跳转到结算场景
+    /// </summary>
+    private void CheckChartEnd()
+    {
+        if (!IsPlaying) return;
+        
+        // 检查是否所有音符都已处理完毕
+        if (chartRunner != null && chartRunner.IsNotesPreCreated)
+        {
+            // 获取谱面总时长
+            float totalDuration = ChartData.Instance.totalDuration;
+            
+            // 如果当前播放时间超过谱面总时长 + 缓冲时间（2秒），则认为谱面结束
+            if (CurrentPlayTime > totalDuration + 2f)
+            {
+                OnChartFinished();
+            }
+        }
+    }
+    
+    /// <summary>
+    /// 谱面结束时调用，跳转到结算场景
+    /// </summary>
+    private void OnChartFinished()
+    {
+        Debug.Log("GameManager: 谱面已结束，准备跳转到结算场景");
+        
+        // 停止播放
+        IsPlaying = false;
+        
+        // 停止 BGM
+        if (bgmAudioSource != null)
+        {
+            bgmAudioSource.Stop();
+        }
+        
+        // 跳转到结算场景
+        UnityEngine.SceneManagement.SceneManager.LoadScene(resultSceneName);
     }
 }

@@ -80,9 +80,6 @@ public class ChartRunner : MonoBehaviour
             noteData.commands.AddRange(relatedCmds);
 
             allNotes.Add(noteObj);
-            Debug.Log($"ChartRunner: 创建音符编号为{cmd.num} ");
-
-            Debug.Log($"ChartRunner: 预创建音符 ID:{cmd.num} 类型:{cmd.type} 触发时间:{cmd.timeA}");
         }
 
         IsNotesPreCreated = true;
